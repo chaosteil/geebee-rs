@@ -55,7 +55,8 @@ impl Timer {
     }
 
     pub fn set_tac(&mut self, value: u8) {
-        self.tac = value.into()
+        self.tac = value.into();
+        self.tima.set_rate(self.tac.rate());
     }
 
     pub fn tac(&self) -> u8 {
