@@ -1,4 +1,5 @@
 use crate::cart::{Cartridge, Controller};
+use std::{fs::File, io::Read, path::Path};
 
 pub struct Memory {
     cart: Cartridge,
@@ -8,7 +9,9 @@ pub struct Memory {
     high_ram: [u8; 0x7f],
     video: [u8; 0x4000],
     oam: [u8; 0xa0],
+    bootrom: Vec<u8>,
 
+    booting: bool,
     rom_ram_mode: u8,
     rom_bank: u8,
     work_ram_bank: u8,
@@ -27,7 +30,9 @@ impl Memory {
             high_ram: [0; 0x7f],
             video: [0; 0x4000],
             oam: [0; 0xa0],
+            bootrom: Vec::new(),
 
+            booting: false,
             rom_ram_mode: 0,
             rom_bank: 0,
             work_ram_bank: 0,
@@ -36,10 +41,29 @@ impl Memory {
             external_ram_enabled: false,
         }
     }
+    pub fn with_bootrom(mut self, data: Vec<u8>) -> Self {
+        self.booting = true;
+        self.bootrom = data;
+        self
+    }
+
+    pub fn with_bootrom_path(self, rom: &Path) -> Result<Self, std::io::Error> {
+        let mut data = Vec::<u8>::new();
+        let mut file = File::open(rom)?;
+        file.read_to_end(&mut data)?;
+        Ok(self.with_bootrom(data))
+    }
 
     pub fn read(&self, address: u16) -> u8 {
         match address {
-            0x0000..=0x3fff => self.cart.data()[address as usize],
+            0x0000..=0x0100 => {
+                if self.booting {
+                    self.bootrom[address as usize]
+                } else {
+                    self.cart.data()[address as usize]
+                }
+            }
+            0x0101..=0x3fff => self.cart.data()[address as usize],
             0x4000..=0x7fff => {
                 let address = (0x4000 * self.rom_bank as u16) + (address - 0x4000);
                 self.cart.data()[address as usize]
@@ -157,8 +181,8 @@ impl Memory {
             _ => {}
         }
     }
-}
 
-enum Error {
-    InvalidAddress,
+    pub fn disable_booting(&mut self) {
+        self.booting = false;
+    }
 }

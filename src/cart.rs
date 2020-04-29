@@ -1,3 +1,4 @@
+use snafu::Snafu;
 use std::fs::File;
 use std::path::Path;
 use std::string;
@@ -36,8 +37,12 @@ impl Cartridge {
     pub fn with_path(cart: &Path) -> Result<Self, Error> {
         let mut data = Vec::<u8>::new();
         let mut file = File::open(cart)?;
-        file.read_to_end(&mut data);
+        file.read_to_end(&mut data)?;
         Self::new(data)
+    }
+
+    pub fn title(&self) -> &String {
+        &self.title
     }
 
     pub fn cart_type(&self) -> CartType {
@@ -50,8 +55,8 @@ impl Cartridge {
 
     fn verify_checksum(data: &Vec<u8>) -> Result<(), Error> {
         let mut x: u8 = 0;
-        for i in 0x0134..0x14c {
-            x = x.overflowing_sub(data[i]).0;
+        for i in 0x0134..=0x14c {
+            x = x.overflowing_sub(data[i]).0.overflowing_sub(1).0;
         }
         if x != data[0x014d] {
             Err(Error::ChecksumFailed)
@@ -205,21 +210,28 @@ impl From<u8> for CartType {
     }
 }
 
+#[derive(Debug, Snafu)]
 pub enum Error {
+    #[snafu(display("rom is not a valid gameboy rom"))]
     InvalidRom,
+    #[snafu(display("checksum check fails"))]
     ChecksumFailed,
-    IO(io::Error),
-    Str(string::FromUtf8Error),
+    IO {
+        err: io::Error,
+    },
+    Str {
+        err: string::FromUtf8Error,
+    },
 }
 
 impl From<io::Error> for Error {
-    fn from(other: io::Error) -> Error {
-        Error::IO(other)
+    fn from(err: io::Error) -> Error {
+        Error::IO { err }
     }
 }
 
 impl From<string::FromUtf8Error> for Error {
-    fn from(other: string::FromUtf8Error) -> Error {
-        Error::Str(other)
+    fn from(err: string::FromUtf8Error) -> Error {
+        Error::Str { err }
     }
 }
