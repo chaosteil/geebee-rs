@@ -37,5 +37,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cpu = cpu::CPU::new(memory);
     loop {
         cpu.step();
+        let serial = cpu.serial();
+        if serial.len() != 0 {
+            println!("{}", std::str::from_utf8(serial)?);
+        }
     }
 }

@@ -8,6 +8,8 @@ pub struct CPU {
     interrupts: Interrupts,
     timer: timer::Timer,
 
+    serial: Vec<u8>,
+    serial_control: u8,
     halt: bool,
     sp: u16,
     pc: u16,
@@ -20,6 +22,8 @@ impl CPU {
             regs: Registers::default(),
             interrupts: Interrupts::default(),
             timer: timer::Timer::new(),
+            serial: Vec::new(),
+            serial_control: 0,
             halt: false,
             sp: 0,
             pc: 0,
@@ -102,9 +106,15 @@ impl CPU {
                     self.memory.disable_booting()
                 }
             }
+            0xff01 => self.serial_control = value,
+            0xff02 => self.serial.push(self.serial_control),
             0xffff => self.interrupts.enable = value,
             _ => self.memory.write(address, value),
         }
+    }
+
+    pub fn serial(&self) -> &[u8] {
+        &self.serial
     }
 }
 
