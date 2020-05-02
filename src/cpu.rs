@@ -43,7 +43,8 @@ impl CPU {
             4
         };
         self.advance_timer(timing);
-        self.lcd.advance(&mut self.memory, timing);
+        self.lcd
+            .advance(&mut self.memory, &mut self.interrupts, timing);
     }
 
     fn handle_instruction(&mut self) -> timer::Timing {
@@ -174,10 +175,10 @@ impl CPU {
     }
 }
 
-struct Interrupts {
-    enabled: bool,
-    enable: u8,
-    flag: u8,
+pub struct Interrupts {
+    pub enabled: bool,
+    pub enable: u8,
+    pub flag: u8,
 }
 
 impl Default for Interrupts {
@@ -360,44 +361,24 @@ impl CPU {
     }
 
     fn op_daa(&mut self) -> timer::Timing {
-        let mut a = self.regs.a;
         let mut carry = false;
+        let mut correction = 0;
 
-        if !self.regs.f.add_sub {
-            if (a & 0x0f) > 0x09 || self.regs.f.half_carry {
-                let (value, c) = a.overflowing_add(0x06);
-                if c {
-                    carry = true;
-                }
-                a = value;
-            }
-            if a > 0x9f || self.regs.f.carry {
-                let (value, c) = a.overflowing_add(0x60);
-                if c {
-                    carry = true;
-                }
-                a = value;
-            }
-        } else {
-            if self.regs.f.half_carry {
-                let (value, c) = a.overflowing_sub(0x06);
-                if c {
-                    carry = true;
-                }
-                a = value;
-            }
-            if self.regs.f.carry {
-                let (value, c) = a.overflowing_sub(0x60);
-                if c {
-                    carry = true;
-                }
-                a = value;
-            }
+        if self.regs.f.half_carry || !self.regs.f.add_sub && (self.regs.a & 0xf) > 9 {
+            correction |= 0x06;
         }
+        if self.regs.f.carry || !self.regs.f.add_sub && self.regs.a > 0x99 {
+            correction |= 0x60;
+            carry = true;
+        }
+        self.regs.a = if self.regs.f.add_sub {
+            self.regs.a.overflowing_sub(correction).0
+        } else {
+            self.regs.a.overflowing_add(correction).0
+        };
         self.regs.f.half_carry = false;
+        self.regs.f.zero = self.regs.a == 0;
         self.regs.f.carry = carry;
-        self.regs.f.zero = a == 0;
-        self.regs.a = a;
         4
     }
 
@@ -459,8 +440,14 @@ impl CPU {
             (value, carry)
         };
         self.regs.f.add_sub = true;
-        self.regs.f.half_carry =
-            (self.regs.a & 0xf0) - (value & 0xf0) - if self.regs.f.carry { 1 } else { 0 } <= 0xf0;
+        self.regs.f.half_carry = (self.regs.a & 0xf0)
+            .overflowing_sub(
+                (value & 0xf0)
+                    .overflowing_sub(if self.regs.f.carry { 1 } else { 0 })
+                    .0,
+            )
+            .0
+            <= 0xf0;
         self.regs.f.carry = carry;
         self.regs.f.zero = value == 0;
         self.regs.a = value;
@@ -538,7 +525,6 @@ impl CPU {
 
     fn op_add_sp(&mut self) -> timer::Timing {
         let value = self.read_pc() as i8;
-
         let a = self.regs.a;
         self.regs.a = (self.sp & 0xff) as u8;
         self.op_add(value as u8);

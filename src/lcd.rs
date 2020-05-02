@@ -1,6 +1,6 @@
-use crate::{memory::Memory, timer::Timing};
-use num_derive::FromPrimitive;
-use num_traits::FromPrimitive;
+use crate::{cpu::Interrupts, memory::Memory, timer::Timing};
+use num_derive::{FromPrimitive, ToPrimitive};
+use num_traits::{FromPrimitive, ToPrimitive};
 
 pub struct LCD {
     regs: Registers,
@@ -11,12 +11,18 @@ pub struct LCD {
     mode_timing: u16,
 }
 
-#[derive(Clone)]
+#[derive(PartialEq, Copy, Clone)]
 enum Mode {
     HBlank,
     VBlank,
     OAM,
     VRAM,
+}
+
+impl Default for Mode {
+    fn default() -> Self {
+        Self::HBlank
+    }
 }
 
 #[derive(Default, Clone)]
@@ -46,7 +52,7 @@ pub struct LCDC {
     bg_display: bool,
 }
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Copy, Clone)]
 enum SpriteSize {
     Small,
     Large,
@@ -65,24 +71,10 @@ pub struct STAT {
     mode_1_vblank: bool,
     mode_0_hblank: bool,
     coincidence: bool,
-    mode: StatMode,
+    mode: Mode,
 }
 
-#[derive(Clone)]
-enum StatMode {
-    HBlank,
-    VBlank,
-    OAM,
-    Transfer,
-}
-
-impl Default for StatMode {
-    fn default() -> Self {
-        Self::HBlank
-    }
-}
-
-#[derive(Default, Clone)]
+#[derive(Default, Copy, Clone)]
 pub struct MonoPalette {
     color3: GrayShades,
     color2: GrayShades,
@@ -90,7 +82,7 @@ pub struct MonoPalette {
     color0: GrayShades,
 }
 
-#[derive(FromPrimitive, Clone)]
+#[derive(FromPrimitive, ToPrimitive, Copy, Clone)]
 enum GrayShades {
     White = 0x00,
     LightGray = 0x01,
@@ -101,6 +93,25 @@ enum GrayShades {
 impl Default for GrayShades {
     fn default() -> Self {
         Self::White
+    }
+}
+
+struct SpriteInfo {
+    x: u8,
+    y: u8,
+    tile: u8,
+    flags: u8,
+}
+
+impl SpriteInfo {
+    fn from_memory(mem: &Memory, id: u8) -> Self {
+        let id = id as u16;
+        Self {
+            y: mem.read(0xff00 + id * 4 + 0),
+            x: mem.read(0xff00 + id * 4 + 1),
+            tile: mem.read(0xff00 + id * 4 + 2),
+            flags: mem.read(0xff00 + id * 4 + 3),
+        }
     }
 }
 
@@ -123,25 +134,24 @@ impl LCD {
         self.regs = regs;
     }
 
-    pub fn advance(&mut self, mem: &mut Memory, timing: Timing) {
+    pub fn advance(&mut self, mem: &mut Memory, interrupts: &mut Interrupts, timing: Timing) {
         self.done_frame = false;
 
+        interrupts.flag &= 0xfc;
         mem.set_oam_access(true);
         mem.set_vram_access(true);
 
         // TODO: reset interrupts
-        // TODO: memory set OAM access to true
-        // TODO: memory set VRAM access to true
         if !self.regs.lcdc.display_enable {
             if self.enabled {
-                self.mode = Mode::HBlank;
+                self.set_mode(interrupts, Mode::HBlank);
                 self.mode_timing = 0;
                 self.enabled = false;
             }
             return;
         }
         if !self.enabled {
-            self.mode = Mode::OAM;
+            self.set_mode(interrupts, Mode::OAM);
             self.mode_timing = 0;
             self.enabled = true;
         }
@@ -151,13 +161,13 @@ impl LCD {
             Mode::OAM => {
                 if self.mode_timing >= 79 {
                     self.mode_timing -= 79;
-                    self.mode = Mode::VRAM;
+                    self.set_mode(interrupts, Mode::VRAM);
                 }
             }
             Mode::VRAM => {
                 if self.mode_timing >= 172 {
                     self.mode_timing -= 172;
-                    self.mode = Mode::HBlank;
+                    self.set_mode(interrupts, Mode::HBlank);
                     self.drawLine(mem, self.regs.ly);
                 }
             }
@@ -165,16 +175,19 @@ impl LCD {
                 if self.mode_timing >= 205 {
                     self.mode_timing -= 205;
                     self.regs.ly += 1;
-                    self.mode = if self.regs.ly >= 144 {
-                        Mode::VBlank
-                    } else {
-                        Mode::OAM
-                    }
+                    self.set_mode(
+                        interrupts,
+                        if self.regs.ly >= 144 {
+                            Mode::VBlank
+                        } else {
+                            Mode::OAM
+                        },
+                    )
                 }
             }
             Mode::VBlank => {
                 if self.mode_timing >= 4560 {
-                    self.mode = Mode::OAM;
+                    self.set_mode(interrupts, Mode::OAM);
                     self.mode_timing -= 4560;
                     self.regs.ly = 0;
                 } else {
@@ -202,38 +215,152 @@ impl LCD {
         }
     }
 
-    fn drawLine(&mut self, _mem: &mut Memory, ly: u8) {
+    fn set_mode(&mut self, interrupts: &mut Interrupts, mode: Mode) {
+        if self.mode == mode {
+            return;
+        }
+        self.mode = mode;
+        self.regs.stat.mode = mode;
+        if (self.mode == Mode::HBlank && interrupts.flag & 0x08 != 0)
+            || (self.mode == Mode::VBlank && interrupts.flag & 0x10 != 0)
+            || (self.mode == Mode::OAM && interrupts.flag & 0x20 != 0)
+        {
+            interrupts.flag |= 0x02;
+        }
+        if self.mode == Mode::VBlank {
+            interrupts.flag |= 0x01;
+            self.done_frame = true;
+        }
+    }
+
+    fn drawLine(&mut self, mem: &Memory, ly: u8) {
         if ly >= 144 {
             return;
         }
 
-        let bg_tile_data = if self.regs.lcdc.bg_window_tile_data_select {
-            0x8000
-        } else {
-            0x9000
-        };
+        // BG
+        let signed = self.regs.lcdc.bg_window_tile_data_select;
+        let bg_tile_data = if signed { 0x8000 } else { 0x9000 };
         let bg_tile_map = if self.regs.lcdc.bg_tile_map_display_select {
             0x9c00
         } else {
             0x9800
         };
-
-        let bgcolors = vec![0; 160];
+        let mut bgcolors = vec![0; 160];
         if self.regs.lcdc.bg_display {
             let y = self.regs.ly.overflowing_add(self.regs.scy).0 as u16;
-            let last_tile_x: Option<u16> = None;
+            let mut last_tile_x: Option<u16> = None;
 
+            let (mut bottom, mut top) = (0x00, 0x00);
             for i in 0u8..160 {
                 let x = i.overflowing_add(self.regs.scx).0 as u16;
                 let (tile_x, tile_y) = (x / 8, y / 8);
                 let (pixel_x, pixel_y) = (8 - x % 8 - 1, y % 8);
 
                 if last_tile_x.is_none() || last_tile_x.unwrap() != tile_x {
-                    let tile = 0; // TODO: read memory from [bg_tile_map + (tile_y * 32) + tile_x]
-                                  // handle signed :x
+                    let tile = mem.read(bg_tile_map + (tile_y * 32) + tile_x);
+                    if signed {
+                        let address =
+                            ((bg_tile_data as i16) + (tile as i16) + pixel_y as i16 * 2) as u16;
+                        bottom = mem.read(address);
+                        top = mem.read(address + 1);
+                    } else {
+                        let address = (bg_tile_data) + (tile as u16) + pixel_y * 2;
+                        bottom = mem.read(address);
+                        top = mem.read(address + 1);
+                    }
+                    last_tile_x = Some(tile_x);
+                }
+
+                let color = LCD::color_number(pixel_x as u8, top, bottom);
+                bgcolors[i as usize] = color;
+                let pixel = self.regs.bgp.color(color);
+                // window.setpixel i ly pixel
+            }
+        }
+
+        // Window
+        let win_tile_map = if self.regs.lcdc.window_tile_map_display_select {
+            0x9c00
+        } else {
+            0x9800
+        };
+        if self.regs.lcdc.window_display_enable && self.regs.wx <= 166 && self.regs.wy <= ly {
+            let y = ly.overflowing_sub(self.regs.wy).0;
+            // TODO
+        }
+
+        // Sprites
+        let sprites = LCD::get_sprites(&mem, ly, self.regs.lcdc.obj_size);
+        let count = match self.regs.lcdc.obj_size {
+            SpriteSize::Large => 2,
+            SpriteSize::Small => 1,
+        };
+        for info in sprites.iter().rev() {
+            let mut pixel_y = ly - info.y + 16;
+            let obp = if info.flags & 0x10 != 0 {
+                self.regs.obp1
+            } else {
+                self.regs.obp0
+            };
+            let (reverse_x, reverse_y, behind) = (
+                info.flags & 0x20 != 0,
+                info.flags & 0x40 != 0,
+                info.flags & 0x80 != 0,
+            );
+            for i in 0..count {
+                let mut sprite_tile = info.tile;
+                if self.regs.lcdc.obj_size == SpriteSize::Large {
+                    if i == 0 {
+                        sprite_tile = info.tile & 0xfe;
+                    } else {
+                        sprite_tile = info.tile | 0x01;
+                        pixel_y -= 8;
+                    }
+                }
+
+                if reverse_y {
+                    pixel_y = 8u8.overflowing_sub(pixel_y).0.overflowing_sub(1).0;
+                    if self.regs.lcdc.obj_size == SpriteSize::Large {
+                        pixel_y = if i == 1 {
+                            pixel_y.overflowing_sub(8).0
+                        } else {
+                            pixel_y.overflowing_add(8).0
+                        };
+                    }
+                }
+
+                let address = 0x8000 + sprite_tile as u16 * 16 + pixel_y as u16 * 2;
+                let bottom = mem.read(address);
+                let top = mem.read(address + 1);
+                for x in 0..8 {
+                    // TODO
                 }
             }
         }
+    }
+
+    fn get_sprites(mem: &Memory, ly: u8, size: SpriteSize) -> Vec<SpriteInfo> {
+        let mut sprites: Vec<SpriteInfo> = (0..40)
+            .map(|i| SpriteInfo::from_memory(mem, i))
+            .filter(|info| {
+                info.y == 0
+                    || info.y >= 160
+                    || ly < info.y.overflowing_sub(16).0
+                    || ly
+                        >= info
+                            .y
+                            .overflowing_sub(if size == SpriteSize::Large { 0 } else { 8 })
+                            .0
+            })
+            .collect();
+        sprites.sort_by(|left, right| left.x.partial_cmp(&right.x).unwrap());
+        sprites.truncate(10);
+        sprites
+    }
+
+    fn color_number(bit: u8, top: u8, bottom: u8) -> u8 {
+        (((top >> bit) & 1) << 1) | (bottom >> bit) & 1
     }
 }
 
@@ -294,10 +421,10 @@ impl From<u8> for STAT {
             mode_0_hblank: f & 0x08 != 0,
             coincidence: f & 0x04 != 0,
             mode: match f & 0x03 {
-                0x00 => StatMode::HBlank,
-                0x01 => StatMode::VBlank,
-                0x02 => StatMode::OAM,
-                0x03 => StatMode::Transfer,
+                0x00 => Mode::HBlank,
+                0x01 => Mode::VBlank,
+                0x02 => Mode::OAM,
+                0x03 => Mode::VRAM,
                 _ => unreachable!(),
             },
         }
@@ -312,11 +439,30 @@ impl From<STAT> for u8 {
             | (if s.mode_0_hblank { 0x08 } else { 0 })
             | (if s.coincidence { 0x04 } else { 0 })
             | match s.mode {
-                StatMode::HBlank => 0x00,
-                StatMode::VBlank => 0x01,
-                StatMode::OAM => 0x02,
-                StatMode::Transfer => 0x03,
+                Mode::HBlank => 0x00,
+                Mode::VBlank => 0x01,
+                Mode::OAM => 0x02,
+                Mode::VRAM => 0x03,
             }
+    }
+}
+
+impl MonoPalette {
+    fn color(&self, color: u8) -> u8 {
+        let color = match color & 0x03 {
+            0x00 => ToPrimitive::to_u8(&self.color0).unwrap(),
+            0x01 => ToPrimitive::to_u8(&self.color1).unwrap(),
+            0x02 => ToPrimitive::to_u8(&self.color2).unwrap(),
+            0x03 => ToPrimitive::to_u8(&self.color3).unwrap(),
+            _ => unreachable!(),
+        };
+        match color & 0x03 {
+            0x00 => 255,
+            0x01 => 170,
+            0x02 => 85,
+            0x03 => 0,
+            _ => unreachable!(),
+        }
     }
 }
 
