@@ -12,10 +12,10 @@ pub struct CPU {
     timer: timer::Timer,
 
     serial: Vec<u8>,
-    serial_control: u8,
     halt: bool,
     sp: u16,
     pc: u16,
+    sb: u8,
 }
 
 impl CPU {
@@ -27,10 +27,10 @@ impl CPU {
             interrupts: Interrupts::default(),
             timer: timer::Timer::new(),
             serial: Vec::new(),
-            serial_control: 0,
             halt: false,
             sp: 0,
             pc: 0,
+            sb: 0,
         }
     }
 
@@ -48,14 +48,12 @@ impl CPU {
 
     fn handle_instruction(&mut self) -> timer::Timing {
         let pc = self.pc;
-        // println!("{:x}", pc);
         let op = self.read_pc();
-        // println!("  {:x}", op);
         self.handle_op(op)
     }
 
     fn handle_interrupts(&mut self) -> Option<timer::Timing> {
-        let has_interrupt = (self.interrupts.enable & self.interrupts.flag) > 0;
+        let has_interrupt = (self.interrupts.enable & self.interrupts.flag) != 0;
         if !self.interrupts.enabled || !has_interrupt {
             if !self.interrupts.enabled && self.interrupts.flag > 0 && self.halt {
                 self.halt = false;
@@ -77,10 +75,9 @@ impl CPU {
     }
 
     fn advance_timer(&mut self, timing: timer::Timing) {
-        if !self.timer.advance(timing) {
-            return;
+        if self.timer.advance(timing) {
+            self.interrupts.flag |= 0x04;
         }
-        self.interrupts.flag |= 0x04;
     }
 
     fn read(&mut self, address: u16) -> u8 {
@@ -116,8 +113,11 @@ impl CPU {
                     self.memory.disable_booting()
                 }
             }
-            0xff01 => self.serial_control = value,
-            0xff02 => self.serial.push(self.serial_control),
+            0xff01 => self.sb = value,
+            0xff02 => {
+                self.serial.push(self.sb);
+                self.interrupts.flag |= 0x08;
+            }
             0xffff => self.interrupts.enable = value,
             _ => self.memory.write(address, value),
         }
@@ -174,11 +174,20 @@ impl CPU {
     }
 }
 
-#[derive(Default)]
 struct Interrupts {
     enabled: bool,
     enable: u8,
     flag: u8,
+}
+
+impl Default for Interrupts {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            enable: 0,
+            flag: 0,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -195,53 +204,57 @@ struct Registers {
 
 impl Registers {
     fn af(&self) -> u16 {
-        (self.a as u16) << 8 | u8::from(self.f) as u16
+        bytes::assemble(self.a, self.f.into())
     }
     fn set_af(&mut self, af: u16) {
-        self.a = ((af & 0xf0) >> 8) as u8;
-        self.f = Flags::from((af & 0x0f) as u8);
+        let (a, f) = bytes::extract(af);
+        self.a = a;
+        self.f = f.into();
     }
 
     fn bc(&self) -> u16 {
-        (self.b as u16) << 8 | self.c as u16
+        bytes::assemble(self.b, self.c)
     }
     fn set_bc(&mut self, bc: u16) {
-        self.b = ((bc & 0xf0) >> 8) as u8;
-        self.c = (bc & 0x0f) as u8;
+        let (b, c) = bytes::extract(bc);
+        self.b = b;
+        self.c = c;
     }
 
     fn de(&self) -> u16 {
-        (self.d as u16) << 8 | self.e as u16
+        bytes::assemble(self.d, self.e)
     }
     fn set_de(&mut self, de: u16) {
-        self.d = ((de & 0xf0) >> 8) as u8;
-        self.e = (de & 0x0f) as u8;
+        let (d, e) = bytes::extract(de);
+        self.d = d;
+        self.e = e;
     }
 
     fn hl(&self) -> u16 {
-        (self.h as u16) << 8 | self.l as u16
+        bytes::assemble(self.h, self.l)
     }
     fn set_hl(&mut self, hl: u16) {
-        self.h = ((hl & 0xf0) >> 8) as u8;
-        self.l = (hl & 0x0f) as u8;
+        let (h, l) = bytes::extract(hl);
+        self.h = h;
+        self.l = l;
     }
 }
 
 #[derive(Clone, Copy, Default)]
 struct Flags {
     zero: bool,
-    carry: bool,
     add_sub: bool,
     half_carry: bool,
+    carry: bool,
 }
 
 impl From<u8> for Flags {
     fn from(f: u8) -> Flags {
         Flags {
             zero: f & 0x80 != 0,
-            carry: f & 0x40 != 0,
-            add_sub: f & 0x20 != 0,
-            half_carry: f & 0x10 != 0,
+            add_sub: f & 0x40 != 0,
+            half_carry: f & 0x20 != 0,
+            carry: f & 0x10 != 0,
         }
     }
 }
@@ -249,19 +262,19 @@ impl From<u8> for Flags {
 impl From<Flags> for u8 {
     fn from(f: Flags) -> u8 {
         (if f.zero { 0x80 } else { 0 })
-            | (if f.carry { 0x40 } else { 0 })
-            | (if f.add_sub { 0x20 } else { 0 })
-            | (if f.half_carry { 0x10 } else { 0 })
+            | (if f.add_sub { 0x40 } else { 0 })
+            | (if f.half_carry { 0x20 } else { 0 })
+            | (if f.carry { 0x10 } else { 0 })
     }
 }
 
 impl CPU {
     fn op_push(&mut self, value: u16) -> timer::Timing {
         let (high, low) = bytes::extract(value);
+        self.sp = self.sp.overflowing_sub(1).0;
         self.write(self.sp, high);
         self.sp = self.sp.overflowing_sub(1).0;
         self.write(self.sp, low);
-        self.sp = self.sp.overflowing_sub(1).0;
         16
     }
 
@@ -275,9 +288,9 @@ impl CPU {
     }
 
     fn op_jr(&mut self, jump: bool) -> timer::Timing {
-        let address = self.read_pc();
+        let address = self.read_pc() as i8;
         if jump {
-            self.pc = self.pc.overflowing_add(address as u16).0;
+            self.pc = (self.pc as i16).overflowing_add(address as i16).0 as u16;
             12
         } else {
             8
@@ -305,13 +318,12 @@ impl CPU {
         self.regs.f.half_carry = (value & 0x0f) == 0x00;
         let value = value.overflowing_sub(1).0;
         self.regs.f.zero = value == 0;
-
-        (value, 4)
+        (value as u8, 4)
     }
 
     fn op_rl(&mut self, value: u8) -> (u8, timer::Timing) {
         self.regs.f.carry = value & 0x80 != 0;
-        let value = value.rotate_left(1);
+        let value = value.rotate_left(1) | (if self.regs.f.carry { 0x01 } else { 0x00 });
         self.regs.f.zero = value == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;
@@ -321,7 +333,7 @@ impl CPU {
     fn op_rlc(&mut self, value: u8) -> (u8, timer::Timing) {
         let carry = self.regs.f.carry;
         self.regs.f.carry = value & 0x80 != 0;
-        let value = value << 1 | (if carry { 0x01 } else { 0x00 });
+        let value = value.rotate_left(1) | (if carry { 0x01 } else { 0x00 });
         self.regs.f.zero = value == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;
@@ -432,7 +444,7 @@ impl CPU {
         let (value, carry) = self.regs.a.overflowing_sub(value);
         self.regs.f.add_sub = true;
         self.regs.f.carry = carry;
-        self.regs.f.half_carry = (self.regs.a & 0xf0) - (value & 0xf0) <= 0xf;
+        self.regs.f.half_carry = (self.regs.a & 0xf0).overflowing_sub(value & 0xf0).0 <= 0xf;
         self.regs.f.zero = value == 0;
         self.regs.a = value;
         4
@@ -525,14 +537,14 @@ impl CPU {
     }
 
     fn op_add_sp(&mut self) -> timer::Timing {
-        let value = self.read_pc();
+        let value = self.read_pc() as i8;
 
         let a = self.regs.a;
         self.regs.a = (self.sp & 0xff) as u8;
-        self.op_add(value);
+        self.op_add(value as u8);
         self.regs.f.zero = false;
         self.regs.a = a;
-        self.sp = self.sp.overflowing_add(value as u16).0;
+        self.sp = (self.sp as i16).overflowing_add(value as i16).0 as u16;
         16
     }
 
@@ -759,17 +771,17 @@ impl CPU {
             }
             0x1c => {
                 let (value, timing) = self.op_inc(self.regs.e);
-                self.regs.c = value;
+                self.regs.e = value;
                 timing
             }
             0x2c => {
                 let (value, timing) = self.op_inc(self.regs.l);
-                self.regs.c = value;
+                self.regs.l = value;
                 timing
             }
             0x3c => {
                 let (value, timing) = self.op_inc(self.regs.a);
-                self.regs.c = value;
+                self.regs.a = value;
                 timing
             }
 
@@ -780,17 +792,17 @@ impl CPU {
             }
             0x1d => {
                 let (value, timing) = self.op_dec(self.regs.e);
-                self.regs.c = value;
+                self.regs.e = value;
                 timing
             }
             0x2d => {
                 let (value, timing) = self.op_dec(self.regs.l);
-                self.regs.c = value;
+                self.regs.l = value;
                 timing
             }
             0x3d => {
                 let (value, timing) = self.op_dec(self.regs.a);
-                self.regs.c = value;
+                self.regs.a = value;
                 timing
             }
 

@@ -27,7 +27,7 @@ impl Timer {
             return false;
         }
         self.tima.set_timer(self.tma);
-        return true;
+        true
     }
 
     pub fn reset_div(&mut self) {

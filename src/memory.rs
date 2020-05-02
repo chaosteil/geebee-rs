@@ -43,8 +43,8 @@ impl Memory {
             video_bank: 0,
             external_ram_enabled: false,
 
-            oam_access: false,
-            vram_access: false,
+            oam_access: true,
+            vram_access: true,
         }
     }
     pub fn with_bootrom(mut self, data: Vec<u8>) -> Self {

@@ -40,12 +40,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut cpu = cpu::CPU::new(memory, lcd);
 
     //ui::launch()?;
+    let mut s = String::new();
     loop {
         cpu.step();
         let serial = cpu.serial();
-        if serial.len() != 0 {
-            println!("{}", std::str::from_utf8(serial)?);
+        if serial.len() != s.len() {
+            s = std::str::from_utf8(serial)?.to_string();
+            println!("{}", s);
         }
     }
-    Ok(())
 }
