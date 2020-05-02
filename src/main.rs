@@ -1,8 +1,10 @@
 mod bytes;
 mod cart;
 mod cpu;
+mod lcd;
 mod memory;
 mod timer;
+mod ui;
 
 use clap::{App, Arg};
 use std::path::Path;
@@ -34,7 +36,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(bootrom) = matches.value_of("bootrom") {
         memory = memory.with_bootrom_path(Path::new(bootrom))?;
     }
-    let mut cpu = cpu::CPU::new(memory);
+    let lcd = lcd::LCD::new();
+    let mut cpu = cpu::CPU::new(memory, lcd);
+
+    //ui::launch()?;
     loop {
         cpu.step();
         let serial = cpu.serial();
@@ -42,4 +47,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("{}", std::str::from_utf8(serial)?);
         }
     }
+    Ok(())
 }

@@ -1,8 +1,8 @@
-use snafu::Snafu;
 use std::fs::File;
 use std::path::Path;
 use std::string;
 use std::{io, io::Read};
+use thiserror::Error;
 
 pub struct Cartridge {
     title: String,
@@ -210,28 +210,20 @@ impl From<u8> for CartType {
     }
 }
 
-#[derive(Debug, Snafu)]
+#[derive(Debug, Error)]
 pub enum Error {
-    #[snafu(display("rom is not a valid gameboy rom"))]
+    #[error("rom is not a valid gameboy rom")]
     InvalidRom,
-    #[snafu(display("checksum check fails"))]
+    #[error("checksum check fails")]
     ChecksumFailed,
-    IO {
-        err: io::Error,
+    #[error("io error")]
+    Io {
+        #[from]
+        source: io::Error,
     },
+    #[error("str error")]
     Str {
-        err: string::FromUtf8Error,
+        #[from]
+        source: string::FromUtf8Error,
     },
-}
-
-impl From<io::Error> for Error {
-    fn from(err: io::Error) -> Error {
-        Error::IO { err }
-    }
-}
-
-impl From<string::FromUtf8Error> for Error {
-    fn from(err: string::FromUtf8Error) -> Error {
-        Error::Str { err }
-    }
 }

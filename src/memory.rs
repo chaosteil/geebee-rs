@@ -18,6 +18,9 @@ pub struct Memory {
     external_ram_bank: u8,
     video_bank: u8,
     external_ram_enabled: bool,
+
+    oam_access: bool,
+    vram_access: bool,
 }
 
 impl Memory {
@@ -39,6 +42,9 @@ impl Memory {
             external_ram_bank: 0,
             video_bank: 0,
             external_ram_enabled: false,
+
+            oam_access: false,
+            vram_access: false,
         }
     }
     pub fn with_bootrom(mut self, data: Vec<u8>) -> Self {
@@ -54,16 +60,24 @@ impl Memory {
         Ok(self.with_bootrom(data))
     }
 
+    pub fn set_oam_access(&mut self, access: bool) {
+        self.oam_access = access;
+    }
+
+    pub fn set_vram_access(&mut self, access: bool) {
+        self.vram_access = access;
+    }
+
     pub fn read(&self, address: u16) -> u8 {
         match address {
-            0x0000..=0x0100 => {
+            0x0000..=0x0ff => {
                 if self.booting {
                     self.bootrom[address as usize]
                 } else {
                     self.cart.data()[address as usize]
                 }
             }
-            0x0101..=0x3fff => self.cart.data()[address as usize],
+            0x0100..=0x3fff => self.cart.data()[address as usize],
             0x4000..=0x7fff => {
                 let address = (0x4000 * self.rom_bank as u16) + (address - 0x4000);
                 self.cart.data()[address as usize]

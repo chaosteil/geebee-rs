@@ -1,9 +1,12 @@
 use crate::bytes;
+use crate::lcd::LCD;
 use crate::memory::Memory;
 use crate::timer;
 
 pub struct CPU {
     memory: Memory,
+    lcd: LCD,
+
     regs: Registers,
     interrupts: Interrupts,
     timer: timer::Timer,
@@ -16,9 +19,10 @@ pub struct CPU {
 }
 
 impl CPU {
-    pub fn new(memory: Memory) -> Self {
+    pub fn new(memory: Memory, lcd: LCD) -> Self {
         Self {
             memory,
+            lcd,
             regs: Registers::default(),
             interrupts: Interrupts::default(),
             timer: timer::Timer::new(),
@@ -39,10 +43,14 @@ impl CPU {
             4
         };
         self.advance_timer(timing);
+        self.lcd.advance(&mut self.memory, timing);
     }
 
     fn handle_instruction(&mut self) -> timer::Timing {
+        let pc = self.pc;
+        // println!("{:x}", pc);
         let op = self.read_pc();
+        // println!("  {:x}", op);
         self.handle_op(op)
     }
 
@@ -82,6 +90,7 @@ impl CPU {
             0xff06 => self.timer.tma(),
             0xff07 => self.timer.tac(),
             0xff0f => self.interrupts.flag,
+            0xff40..=0xff4b => self.handle_lcd_read(address),
             0xff50 => 0,
             0xffff => self.interrupts.enable,
             _ => self.memory.read(address),
@@ -101,6 +110,7 @@ impl CPU {
             0xff06 => self.timer.set_tma(value),
             0xff07 => self.timer.set_tac(value),
             0xff0f => self.interrupts.flag = value,
+            0xff40..=0xff4b => self.handle_lcd_write(address, value),
             0xff50 => {
                 if value != 0 {
                     self.memory.disable_booting()
@@ -115,6 +125,52 @@ impl CPU {
 
     pub fn serial(&self) -> &[u8] {
         &self.serial
+    }
+
+    fn handle_lcd_read(&mut self, address: u16) -> u8 {
+        let regs = self.lcd.regs();
+        match address {
+            0xff40 => regs.lcdc.into(),
+            0xff41 => regs.stat.into(),
+            0xff42 => regs.scy.into(),
+            0xff43 => regs.scx.into(),
+            0xff44 => regs.ly.into(),
+            0xff45 => regs.lyc.into(),
+            0xff46 => 0,
+            0xff47 => regs.bgp.into(),
+            0xff48 => regs.obp0.into(),
+            0xff49 => regs.obp1.into(),
+            0xff4a => regs.wy,
+            0xff4b => regs.wx,
+            _ => unreachable!(),
+        }
+    }
+
+    fn handle_lcd_write(&mut self, address: u16, value: u8) {
+        let mut regs = self.lcd.regs();
+        match address {
+            0xff40 => regs.lcdc = value.into(),
+            0xff41 => regs.stat = value.into(),
+            0xff42 => regs.scy = value.into(),
+            0xff43 => regs.scx = value.into(),
+            0xff44 => regs.ly = value.into(),
+            0xff45 => regs.lyc = value.into(),
+            0xff46 => {
+                let start = (value as u16) << 8 | 0x00;
+                let end = (value as u16) << 8 | 0x9f;
+                for (i, dest) in (start..=end).enumerate() {
+                    let v = self.read(dest);
+                    self.write(0xfe00 + i as u16, v);
+                }
+            }
+            0xff47 => regs.bgp = value.into(),
+            0xff48 => regs.obp0 = value.into(),
+            0xff49 => regs.obp1 = value.into(),
+            0xff4a => regs.wy = value.into(),
+            0xff4b => regs.wx = value.into(),
+            _ => unreachable!(),
+        }
+        self.lcd.set_regs(regs);
     }
 }
 
@@ -1176,7 +1232,7 @@ impl CPU {
                         self.op_bit(value, bit)
                     }
                     7 => self.op_bit(self.regs.a, bit),
-                    _ => panic!("impossible"),
+                    _ => unreachable!(),
                 }
             }
             0x80..=0xbf => {
@@ -1197,7 +1253,7 @@ impl CPU {
                         timing
                     }
                     7 => { let (value, timing) = self.op_res(self.regs.a, bit); self.regs.a = value; timing }
-                    _ => panic!("impossible"),
+                    _ => unreachable!(),
                 }
             }
             0xc0..=0xff => {
@@ -1218,7 +1274,7 @@ impl CPU {
                         timing
                     }
                     7 => { let (value, timing) = self.op_set(self.regs.a, bit); self.regs.a = value; timing }
-                    _ => panic!("impossible"),
+                    _ => unreachable!(),
                 }
             }
         }
