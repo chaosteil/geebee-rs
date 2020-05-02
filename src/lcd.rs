@@ -84,10 +84,10 @@ impl Default for StatMode {
 
 #[derive(Default, Clone)]
 pub struct MonoPalette {
-    Color3: GrayShades,
-    Color2: GrayShades,
-    Color1: GrayShades,
-    Color0: GrayShades,
+    color3: GrayShades,
+    color2: GrayShades,
+    color1: GrayShades,
+    color0: GrayShades,
 }
 
 #[derive(FromPrimitive, Clone)]
@@ -202,7 +202,7 @@ impl LCD {
         }
     }
 
-    fn drawLine(&mut self, mem: &mut Memory, ly: u8) {
+    fn drawLine(&mut self, _mem: &mut Memory, ly: u8) {
         if ly >= 144 {
             return;
         }
@@ -323,16 +323,16 @@ impl From<STAT> for u8 {
 impl From<u8> for MonoPalette {
     fn from(f: u8) -> MonoPalette {
         MonoPalette {
-            Color3: FromPrimitive::from_u8((f & 0xc0) >> 6).unwrap(),
-            Color2: FromPrimitive::from_u8((f & 0x30) >> 4).unwrap(),
-            Color1: FromPrimitive::from_u8((f & 0x0c) >> 2).unwrap(),
-            Color0: FromPrimitive::from_u8(f & 0x03).unwrap(),
+            color3: FromPrimitive::from_u8((f & 0xc0) >> 6).unwrap(),
+            color2: FromPrimitive::from_u8((f & 0x30) >> 4).unwrap(),
+            color1: FromPrimitive::from_u8((f & 0x0c) >> 2).unwrap(),
+            color0: FromPrimitive::from_u8(f & 0x03).unwrap(),
         }
     }
 }
 
 impl From<MonoPalette> for u8 {
     fn from(mp: MonoPalette) -> u8 {
-        (mp.Color3 as u8) << 6 | (mp.Color2 as u8) << 4 | (mp.Color1 as u8) << 2 | (mp.Color0 as u8)
+        (mp.color3 as u8) << 6 | (mp.color2 as u8) << 4 | (mp.color1 as u8) << 2 | (mp.color0 as u8)
     }
 }
