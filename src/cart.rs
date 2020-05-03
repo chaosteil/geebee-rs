@@ -13,32 +13,37 @@ pub struct Cartridge {
 }
 
 impl Cartridge {
-    pub fn new(data: Vec<u8>) -> Result<Self, Error> {
+    pub fn new() -> Self {
+        Self {
+            title: "EMPTY".to_string(),
+            cart_type: CartType::default(),
+            cgb: false,
+            sgb: false,
+            data: vec![],
+        }
+    }
+
+    pub fn with_path(self, cart: &Path) -> Result<Self, Error> {
+        let mut data = Vec::<u8>::new();
+        let mut file = File::open(cart)?;
+        file.read_to_end(&mut data)?;
+        self.with_data(&data)
+    }
+
+    pub fn with_data(mut self, data: &[u8]) -> Result<Self, Error> {
         if data.len() < 16384 {
             return Err(Error::InvalidRom);
         }
         Self::verify_checksum(&data)?;
-        let title = String::from_utf8((data[0x0134..0x134 + 11]).to_vec())?;
-        let cart_type = CartType::from(data[0x0147]);
-        let cgb = match data[0x0143] {
+        self.title = String::from_utf8((data[0x0134..0x134 + 11]).to_vec())?;
+        self.cart_type = CartType::from(data[0x0147]);
+        self.cgb = match data[0x0143] {
             0x80 | 0xc0 => true,
             _ => false,
         };
-        let sgb = data[0x0146] == 0x03;
-
-        Ok(Cartridge {
-            title,
-            cart_type,
-            cgb,
-            sgb,
-            data,
-        })
-    }
-    pub fn with_path(cart: &Path) -> Result<Self, Error> {
-        let mut data = Vec::<u8>::new();
-        let mut file = File::open(cart)?;
-        file.read_to_end(&mut data)?;
-        Self::new(data)
+        self.sgb = data[0x0146] == 0x03;
+        self.data = data.to_vec();
+        Ok(self)
     }
 
     pub fn title(&self) -> &String {
@@ -53,10 +58,10 @@ impl Cartridge {
         &self.data
     }
 
-    fn verify_checksum(data: &Vec<u8>) -> Result<(), Error> {
+    fn verify_checksum(data: &[u8]) -> Result<(), Error> {
         let mut x: u8 = 0;
-        for i in 0x0134..=0x14c {
-            x = x.overflowing_sub(data[i]).0.overflowing_sub(1).0;
+        for i in data.iter().take(0x14c + 1).skip(0x0134) {
+            x = x.overflowing_sub(*i).0.overflowing_sub(1).0;
         }
         if x != data[0x014d] {
             Err(Error::ChecksumFailed)

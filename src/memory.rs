@@ -24,9 +24,9 @@ pub struct Memory {
 }
 
 impl Memory {
-    pub fn new(cart: Cartridge) -> Self {
+    pub fn new() -> Self {
         Self {
-            cart,
+            cart: Cartridge::new(),
             work_ram: [0; 0x2000],
             work_ram_banks: Vec::new(),
             external_ram: [0; 0x2000],
@@ -47,9 +47,15 @@ impl Memory {
             vram_access: true,
         }
     }
-    pub fn with_bootrom(mut self, data: Vec<u8>) -> Self {
-        self.booting = true;
-        self.bootrom = data;
+
+    pub fn with_cartridge(mut self, cart: Cartridge) -> Self {
+        self.cart = cart;
+        self
+    }
+
+    pub fn with_bootrom(mut self, data: &[u8]) -> Self {
+        self.booting = false;
+        self.bootrom = data.to_vec();
         self
     }
 
@@ -57,7 +63,7 @@ impl Memory {
         let mut data = Vec::<u8>::new();
         let mut file = File::open(rom)?;
         file.read_to_end(&mut data)?;
-        Ok(self.with_bootrom(data))
+        Ok(self.with_bootrom(&data))
     }
 
     pub fn set_oam_access(&mut self, access: bool) {

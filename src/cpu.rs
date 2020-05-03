@@ -28,8 +28,8 @@ impl CPU {
             timer: timer::Timer::new(),
             serial: Vec::new(),
             halt: false,
-            sp: 0,
-            pc: 0,
+            sp: 0xfffe,
+            pc: 0x0100,
             sb: 0,
         }
     }
@@ -48,7 +48,6 @@ impl CPU {
     }
 
     fn handle_instruction(&mut self) -> timer::Timing {
-        let pc = self.pc;
         let op = self.read_pc();
         self.handle_op(op)
     }
@@ -133,10 +132,10 @@ impl CPU {
         match address {
             0xff40 => regs.lcdc.into(),
             0xff41 => regs.stat.into(),
-            0xff42 => regs.scy.into(),
-            0xff43 => regs.scx.into(),
-            0xff44 => regs.ly.into(),
-            0xff45 => regs.lyc.into(),
+            0xff42 => regs.scy,
+            0xff43 => regs.scx,
+            0xff44 => regs.ly,
+            0xff45 => regs.lyc,
             0xff46 => 0,
             0xff47 => regs.bgp.into(),
             0xff48 => regs.obp0.into(),
@@ -152,12 +151,12 @@ impl CPU {
         match address {
             0xff40 => regs.lcdc = value.into(),
             0xff41 => regs.stat = value.into(),
-            0xff42 => regs.scy = value.into(),
-            0xff43 => regs.scx = value.into(),
-            0xff44 => regs.ly = value.into(),
-            0xff45 => regs.lyc = value.into(),
+            0xff42 => regs.scy = value,
+            0xff43 => regs.scx = value,
+            0xff44 => regs.ly = value,
+            0xff45 => regs.lyc = value,
             0xff46 => {
-                let start = (value as u16) << 8 | 0x00;
+                let start = (value as u16) << 8;
                 let end = (value as u16) << 8 | 0x9f;
                 for (i, dest) in (start..=end).enumerate() {
                     let v = self.read(dest);
@@ -167,8 +166,8 @@ impl CPU {
             0xff47 => regs.bgp = value.into(),
             0xff48 => regs.obp0 = value.into(),
             0xff49 => regs.obp1 = value.into(),
-            0xff4a => regs.wy = value.into(),
-            0xff4b => regs.wx = value.into(),
+            0xff4a => regs.wy = value,
+            0xff4b => regs.wx = value,
             _ => unreachable!(),
         }
         self.lcd.set_regs(regs);
@@ -191,16 +190,16 @@ impl Default for Interrupts {
     }
 }
 
-#[derive(Default)]
-struct Registers {
-    a: u8,
-    f: Flags,
-    b: u8,
-    c: u8,
-    d: u8,
-    e: u8,
-    h: u8,
-    l: u8,
+#[derive(Default, Clone, Copy)]
+pub struct Registers {
+    pub a: u8,
+    pub f: Flags,
+    pub b: u8,
+    pub c: u8,
+    pub d: u8,
+    pub e: u8,
+    pub h: u8,
+    pub l: u8,
 }
 
 impl Registers {
@@ -242,11 +241,11 @@ impl Registers {
 }
 
 #[derive(Clone, Copy, Default)]
-struct Flags {
-    zero: bool,
-    add_sub: bool,
-    half_carry: bool,
-    carry: bool,
+pub struct Flags {
+    pub zero: bool,
+    pub add_sub: bool,
+    pub half_carry: bool,
+    pub carry: bool,
 }
 
 impl From<u8> for Flags {
@@ -289,9 +288,9 @@ impl CPU {
     }
 
     fn op_jr(&mut self, jump: bool) -> timer::Timing {
-        let address = self.read_pc() as i8;
+        let address = self.read_pc();
         if jump {
-            self.pc = (self.pc as i16).overflowing_add(address as i16).0 as u16;
+            self.pc = (self.pc as i16).overflowing_add(address as i8 as i16).0 as u16;
             12
         } else {
             8
@@ -307,7 +306,7 @@ impl CPU {
 
     fn op_inc(&mut self, value: u8) -> (u8, timer::Timing) {
         self.regs.f.add_sub = false;
-        self.regs.f.half_carry = (value & 0x0f) == 0x0f;
+        self.regs.f.half_carry = (value & 0x0f) + 1 > 0x0f;
         let value = value.overflowing_add(1).0;
         self.regs.f.zero = value == 0;
 
@@ -316,7 +315,7 @@ impl CPU {
 
     fn op_dec(&mut self, value: u8) -> (u8, timer::Timing) {
         self.regs.f.add_sub = true;
-        self.regs.f.half_carry = (value & 0x0f) == 0x00;
+        self.regs.f.half_carry = value.trailing_zeros() >= 4;
         let value = value.overflowing_sub(1).0;
         self.regs.f.zero = value == 0;
         (value as u8, 4)
@@ -324,7 +323,7 @@ impl CPU {
 
     fn op_rl(&mut self, value: u8) -> (u8, timer::Timing) {
         self.regs.f.carry = value & 0x80 != 0;
-        let value = value.rotate_left(1) | (if self.regs.f.carry { 0x01 } else { 0x00 });
+        let value = value << 1 | if self.regs.f.carry { 1 } else { 0 };
         self.regs.f.zero = value == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;
@@ -334,7 +333,7 @@ impl CPU {
     fn op_rlc(&mut self, value: u8) -> (u8, timer::Timing) {
         let carry = self.regs.f.carry;
         self.regs.f.carry = value & 0x80 != 0;
-        let value = value.rotate_left(1) | (if carry { 0x01 } else { 0x00 });
+        let value = value << 1 | if carry { 0x01 } else { 0x00 };
         self.regs.f.zero = value == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;
@@ -362,23 +361,23 @@ impl CPU {
 
     fn op_daa(&mut self) -> timer::Timing {
         let mut carry = false;
-        let mut correction = 0;
+        let mut adjust = 0;
 
-        if self.regs.f.half_carry || !self.regs.f.add_sub && (self.regs.a & 0xf) > 9 {
-            correction |= 0x06;
+        if self.regs.f.half_carry || (!self.regs.f.add_sub && (self.regs.a & 0x0f) > 0x09) {
+            adjust |= 0x06;
         }
-        if self.regs.f.carry || !self.regs.f.add_sub && self.regs.a > 0x99 {
-            correction |= 0x60;
+        if self.regs.f.carry || (!self.regs.f.add_sub && (self.regs.a > 0x99)) {
+            adjust |= 0x60;
             carry = true;
         }
         self.regs.a = if self.regs.f.add_sub {
-            self.regs.a.overflowing_sub(correction).0
+            self.regs.a.wrapping_sub(adjust)
         } else {
-            self.regs.a.overflowing_add(correction).0
+            self.regs.a.wrapping_add(adjust)
         };
         self.regs.f.half_carry = false;
-        self.regs.f.zero = self.regs.a == 0;
         self.regs.f.carry = carry;
+        self.regs.f.zero = self.regs.a == 0;
         4
     }
 
@@ -386,10 +385,7 @@ impl CPU {
         self.regs.f.add_sub = false;
         let (value, carry) = self.regs.hl().overflowing_add(word);
         self.regs.f.carry = carry;
-        self.regs.f.half_carry = bytes::extract(self.regs.hl())
-            .1
-            .overflowing_add(bytes::extract(word).1)
-            .1;
+        self.regs.f.half_carry = (self.regs.hl() & 0x07ff) + (word & 0x07ff) > 0x7ff;
         self.regs.set_hl(value);
         8
     }
@@ -414,7 +410,7 @@ impl CPU {
         };
         self.regs.f.add_sub = false;
         self.regs.f.half_carry =
-            (self.regs.a & 0x0f) + (value & 0x0f) + if self.regs.f.carry { 1 } else { 0 } > 0xf;
+            (self.regs.a & 0x0f) + (value & 0x0f) + if self.regs.f.carry { 1 } else { 0 } > 0x0f;
         self.regs.f.carry = carry;
         self.regs.f.zero = value == 0;
         self.regs.a = value;
@@ -425,7 +421,7 @@ impl CPU {
         let (value, carry) = self.regs.a.overflowing_sub(value);
         self.regs.f.add_sub = true;
         self.regs.f.carry = carry;
-        self.regs.f.half_carry = (self.regs.a & 0xf0).overflowing_sub(value & 0xf0).0 <= 0xf;
+        self.regs.f.half_carry = (self.regs.a & 0xf0).overflowing_sub(value & 0xf0).0 <= 0x0f;
         self.regs.f.zero = value == 0;
         self.regs.a = value;
         4
@@ -467,6 +463,9 @@ impl CPU {
         self.regs.a ^= value;
         self.regs.f = Flags::from(0);
         self.regs.f.zero = self.regs.a == 0;
+        self.regs.f.add_sub = false;
+        self.regs.f.half_carry = false;
+        self.regs.f.carry = false;
         4
     }
 
@@ -524,13 +523,14 @@ impl CPU {
     }
 
     fn op_add_sp(&mut self) -> timer::Timing {
-        let value = self.read_pc() as i8;
-        let a = self.regs.a;
-        self.regs.a = (self.sp & 0xff) as u8;
-        self.op_add(value as u8);
+        let value = self.read_pc() as i8 as i16 as u16;
+
+        self.regs.f.carry = (self.sp & 0xff) + (value & 0xff) > 0xff;
+        self.regs.f.half_carry = (self.sp & 0x0f) + (value & 0x0f) > 0x0f;
         self.regs.f.zero = false;
-        self.regs.a = a;
-        self.sp = (self.sp as i16).overflowing_add(value as i16).0 as u16;
+        self.regs.f.add_sub = false;
+
+        self.sp = self.sp.overflowing_add(value).0;
         16
     }
 
@@ -563,8 +563,7 @@ impl CPU {
     }
 
     fn op_swap(&mut self, value: u8) -> (u8, timer::Timing) {
-        let tmp = value & 0x0f;
-        let value = (tmp << 4) | (value >> 4);
+        let value = (value << 4) | (value >> 4);
         self.regs.f.zero = value == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;
@@ -619,15 +618,15 @@ impl CPU {
                 t
             }
 
-            0x02 => { self.memory.write(self.regs.bc(), self.regs.a); 8 }
-            0x12 => { self.memory.write(self.regs.de(), self.regs.a); 8 }
+            0x02 => { self.write(self.regs.bc(), self.regs.a); 8 }
+            0x12 => { self.write(self.regs.de(), self.regs.a); 8 }
             0x22 => {
-                self.memory.write(self.regs.hl(), self.regs.a);
+                self.write(self.regs.hl(), self.regs.a);
                 self.regs.set_hl(self.regs.hl().overflowing_add(1).0);
                 8
             }
             0x32 => {
-                self.memory.write(self.regs.hl(), self.regs.a);
+                self.write(self.regs.hl(), self.regs.a);
                 self.regs.set_hl(self.regs.hl().overflowing_sub(1).0);
                 8
             }
@@ -972,13 +971,13 @@ impl CPU {
             0xe0 => {
                 self.advance_timer(4);
                 let address = self.read_pc();
-                self.write(0xff00 | address as u16, self.regs.a);
+                self.write(0xff00 + address as u16, self.regs.a);
                 8
             }
             0xf0 => {
                 self.advance_timer(4);
                 let address = self.read_pc();
-                self.regs.a = self.read(0xff00 | address as u16);
+                self.regs.a = self.read(0xff00 + address as u16);
                 8
             }
 
@@ -1276,5 +1275,206 @@ impl CPU {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn new_cpu(data: &[u8]) -> CPU {
+        let mut cpu = CPU::new(Memory::new().with_bootrom(data), LCD::new());
+        cpu.sp = 0xfffe;
+        cpu.pc = 0;
+        cpu
+    }
+
+    #[test]
+    fn op_push_pop() {
+        let mut cpu = new_cpu(&[]);
+        cpu.op_push(0x0102);
+        assert_eq!(cpu.sp, 0xfffc);
+        assert_eq!(cpu.op_pop().0, 0x0102);
+        assert_eq!(cpu.sp, 0xfffe);
+    }
+
+    #[test]
+    fn op_jr() {
+        let mut cpu = new_cpu(&[0x12, 0xfd]);
+        assert_eq!(cpu.op_jr(false), 8);
+        assert_eq!(cpu.pc, 0x0001);
+
+        cpu.pc = 0;
+        assert_eq!(cpu.op_jr(true), 12);
+        assert_eq!(cpu.pc, 0x0013);
+
+        cpu.pc = 0x01;
+        cpu.op_jr(true);
+        assert_eq!(cpu.pc, 0xffff);
+    }
+
+    #[test]
+    fn op_ld_16() {
+        let mut cpu = new_cpu(&[0x12, 0xfd]);
+        let res = cpu.op_ld_16();
+        assert_eq!(res.0, 0xfd12);
+        assert_eq!(cpu.pc, 0x0002);
+    }
+
+    #[test]
+    fn op_inc() {
+        let mut cpu = new_cpu(&[]);
+
+        assert_eq!(cpu.op_inc(0x01).0, 0x02);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+
+        assert_eq!(cpu.op_inc(0x0f).0, 0x10);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, true);
+
+        assert_eq!(cpu.op_inc(0xff).0, 0x00);
+        assert_eq!(cpu.regs.f.zero, true);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, true);
+    }
+
+    #[test]
+    fn op_dec() {
+        let mut cpu = new_cpu(&[]);
+        assert_eq!(cpu.op_dec(0x01).0, 0x00);
+        assert_eq!(cpu.regs.f.zero, true);
+        assert_eq!(cpu.regs.f.add_sub, true);
+        assert_eq!(cpu.regs.f.half_carry, false);
+
+        assert_eq!(cpu.op_dec(0x00).0, 0xff);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, true);
+        assert_eq!(cpu.regs.f.half_carry, true);
+
+        assert_eq!(cpu.op_dec(0xf0).0, 0xef);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, true);
+        assert_eq!(cpu.regs.f.half_carry, true);
+    }
+
+    #[test]
+    fn op_rl() {
+        let mut cpu = new_cpu(&[]);
+
+        assert_eq!(cpu.op_rl(0x01).0, 0x02);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, false);
+
+        assert_eq!(cpu.op_rl(0xff).0, 0xff);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, true);
+
+        assert_eq!(cpu.op_rl(0x80).0, 0x01);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, true);
+
+        assert_eq!(cpu.op_rl(0x00).0, 0x00);
+        assert_eq!(cpu.regs.f.zero, true);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, false);
+    }
+
+    #[test]
+    fn op_rlc() {
+        let mut cpu = new_cpu(&[]);
+
+        cpu.regs.f.carry = false;
+        assert_eq!(cpu.op_rlc(0x01).0, 0x02);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, false);
+
+        cpu.regs.f.carry = false;
+        assert_eq!(cpu.op_rlc(0x7f).0, 0xfe);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, false);
+
+        cpu.regs.f.carry = false;
+        assert_eq!(cpu.op_rlc(0x80).0, 0x00);
+        assert_eq!(cpu.regs.f.zero, true);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, true);
+
+        cpu.regs.f.carry = false;
+        assert_eq!(cpu.op_rlc(0x00).0, 0x00);
+        assert_eq!(cpu.regs.f.zero, true);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, false);
+    }
+
+    #[test]
+    fn op_rr() {
+        let mut cpu = new_cpu(&[]);
+
+        assert_eq!(cpu.op_rr(0x02).0, 0x01);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, false);
+
+        assert_eq!(cpu.op_rr(0x00).0, 0x00);
+        assert_eq!(cpu.regs.f.zero, true);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, false);
+
+        assert_eq!(cpu.op_rr(0x01).0, 0x80);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, true);
+    }
+
+    #[test]
+    fn op_rrc() {
+        let mut cpu = new_cpu(&[]);
+
+        cpu.regs.f.carry = false;
+        assert_eq!(cpu.op_rrc(0x02).0, 0x01);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, false);
+
+        cpu.regs.f.carry = false;
+        assert_eq!(cpu.op_rrc(0x01).0, 0x00);
+        assert_eq!(cpu.regs.f.zero, true);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, true);
+
+        cpu.regs.f.carry = true;
+        assert_eq!(cpu.op_rrc(0x02).0, 0x81);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, false);
+
+        cpu.regs.f.carry = true;
+        assert_eq!(cpu.op_rrc(0x01).0, 0x80);
+        assert_eq!(cpu.regs.f.zero, false);
+        assert_eq!(cpu.regs.f.add_sub, false);
+        assert_eq!(cpu.regs.f.half_carry, false);
+        assert_eq!(cpu.regs.f.carry, true);
     }
 }

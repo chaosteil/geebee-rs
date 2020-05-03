@@ -107,7 +107,7 @@ impl SpriteInfo {
     fn from_memory(mem: &Memory, id: u8) -> Self {
         let id = id as u16;
         Self {
-            y: mem.read(0xff00 + id * 4 + 0),
+            y: mem.read(0xff00 + id * 4),
             x: mem.read(0xff00 + id * 4 + 1),
             tile: mem.read(0xff00 + id * 4 + 2),
             flags: mem.read(0xff00 + id * 4 + 3),
@@ -141,7 +141,6 @@ impl LCD {
         mem.set_oam_access(true);
         mem.set_vram_access(true);
 
-        // TODO: reset interrupts
         if !self.regs.lcdc.display_enable {
             if self.enabled {
                 self.set_mode(interrupts, Mode::HBlank);
@@ -168,7 +167,7 @@ impl LCD {
                 if self.mode_timing >= 172 {
                     self.mode_timing -= 172;
                     self.set_mode(interrupts, Mode::HBlank);
-                    self.drawLine(mem, self.regs.ly);
+                    self.draw_line(mem, self.regs.ly);
                 }
             }
             Mode::HBlank => {
@@ -197,6 +196,10 @@ impl LCD {
             }
         }
 
+        self.regs.stat.coincidence = self.regs.ly == self.regs.lyc;
+        if self.regs.stat.coincidence && self.regs.stat.lyc_equals_lc {
+            interrupts.flag |= 0x01;
+        }
         mem.set_oam_access(true);
         mem.set_vram_access(true);
         if !self.enabled {
@@ -233,7 +236,7 @@ impl LCD {
         }
     }
 
-    fn drawLine(&mut self, mem: &Memory, ly: u8) {
+    fn draw_line(&mut self, mem: &Memory, ly: u8) {
         if ly >= 144 {
             return;
         }
@@ -448,7 +451,7 @@ impl From<STAT> for u8 {
 }
 
 impl MonoPalette {
-    fn color(&self, color: u8) -> u8 {
+    fn color(self, color: u8) -> u8 {
         let color = match color & 0x03 {
             0x00 => ToPrimitive::to_u8(&self.color0).unwrap(),
             0x01 => ToPrimitive::to_u8(&self.color1).unwrap(),

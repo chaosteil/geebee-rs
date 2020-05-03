@@ -78,9 +78,9 @@ impl SubTimer {
         self.timer = value as u32 * self.rate;
     }
     fn set_rate(&mut self, rate: u32) {
-        self.timer = self.timer / self.rate;
+        self.timer /= self.rate;
         self.rate = rate;
-        self.timer = self.timer * self.rate;
+        self.timer *= self.rate;
     }
     fn inc(&mut self, value: u8) -> bool {
         self.timer += value as u32;
@@ -105,7 +105,7 @@ struct TAC {
 }
 
 impl TAC {
-    fn rate(&self) -> u32 {
+    fn rate(self) -> u32 {
         match self.clock {
             0b00 => 1024,
             0b01 => 16,
