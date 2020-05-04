@@ -40,6 +40,15 @@ impl CPU {
         }
     }
 
+    pub fn cycle(&mut self) {
+        loop {
+            self.step();
+            if self.lcd.done_frame() {
+                break;
+            }
+        }
+    }
+
     pub fn step(&mut self) {
         let timing = if let Some(timing) = self.handle_interrupts() {
             timing

@@ -145,6 +145,10 @@ impl LCD {
         &self.screen
     }
 
+    pub fn done_frame(&self) -> bool {
+        self.done_frame
+    }
+
     pub fn advance(&mut self, mem: &mut Memory, interrupts: &mut Interrupts, timing: Timing) {
         self.done_frame = false;
 

@@ -21,9 +21,7 @@ pub fn launch(mut cpu: CPU) -> Result<(), Box<dyn std::error::Error>> {
     )
     .unwrap();
     while let Some(e) = window.next() {
-        while cpu.lcd().regs().ly != 144 {
-            cpu.step();
-        }
+        cpu.cycle();
         window.draw_2d(&e, |c, g, d| {
             texture_context.encoder.flush(d);
             let screen = cpu.lcd().screen();
@@ -35,9 +33,6 @@ pub fn launch(mut cpu: CPU) -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap();
             image(&texture, c.transform, g);
         });
-        while cpu.lcd().regs().ly != 0 {
-            cpu.step();
-        }
     }
     Ok(())
 }
