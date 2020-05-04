@@ -2,6 +2,8 @@ use crate::{cpu::Interrupts, memory::Memory, timer::Timing};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
 
+pub const SCREEN_SIZE: (u8, u8) = (160, 144);
+
 pub struct LCD {
     regs: Registers,
     done_frame: bool,
@@ -9,6 +11,9 @@ pub struct LCD {
 
     enabled: bool,
     mode_timing: u16,
+
+    screen: Vec<u8>,
+    i: u16,
 }
 
 #[derive(PartialEq, Copy, Clone)]
@@ -123,6 +128,8 @@ impl LCD {
             mode: Mode::HBlank,
             enabled: false,
             mode_timing: 0,
+            screen: vec![0xff; 4 * SCREEN_SIZE.0 as usize * SCREEN_SIZE.1 as usize],
+            i: 0,
         }
     }
 
@@ -132,6 +139,10 @@ impl LCD {
 
     pub fn set_regs(&mut self, regs: Registers) {
         self.regs = regs;
+    }
+
+    pub fn screen(&self) -> &[u8] {
+        &self.screen
     }
 
     pub fn advance(&mut self, mem: &mut Memory, interrupts: &mut Interrupts, timing: Timing) {
@@ -176,7 +187,7 @@ impl LCD {
                     self.regs.ly += 1;
                     self.set_mode(
                         interrupts,
-                        if self.regs.ly >= 144 {
+                        if self.regs.ly >= SCREEN_SIZE.1 {
                             Mode::VBlank
                         } else {
                             Mode::OAM
@@ -190,7 +201,7 @@ impl LCD {
                     self.mode_timing -= 4560;
                     self.regs.ly = 0;
                 } else {
-                    let ly = (self.mode_timing / 456) + 144;
+                    let ly = (self.mode_timing / 456) + SCREEN_SIZE.1 as u16;
                     self.regs.ly = ly as u8;
                 }
             }
@@ -237,38 +248,42 @@ impl LCD {
     }
 
     fn draw_line(&mut self, mem: &Memory, ly: u8) {
-        if ly >= 144 {
+        if ly >= SCREEN_SIZE.1 {
             return;
         }
 
         // BG
         let signed = self.regs.lcdc.bg_window_tile_data_select;
-        let bg_tile_data = if signed { 0x8000 } else { 0x9000 };
+        let bg_tile_data: u16 = if signed { 0x8000 } else { 0x9000 };
         let bg_tile_map = if self.regs.lcdc.bg_tile_map_display_select {
             0x9c00
         } else {
             0x9800
         };
-        let mut bgcolors = vec![0; 160];
+        let mut bgcolors = vec![0; SCREEN_SIZE.0 as usize];
         if self.regs.lcdc.bg_display {
-            let y = self.regs.ly.overflowing_add(self.regs.scy).0 as u16;
-            let mut last_tile_x: Option<u16> = None;
+            let y = ly.wrapping_add(self.regs.scy);
+            let mut last_tile_x: Option<u8> = None;
 
             let (mut bottom, mut top) = (0x00, 0x00);
-            for i in 0u8..160 {
-                let x = i.overflowing_add(self.regs.scx).0 as u16;
+            for i in 0u8..SCREEN_SIZE.0 {
+                let x = i.wrapping_add(self.regs.scx);
                 let (tile_x, tile_y) = (x / 8, y / 8);
-                let (pixel_x, pixel_y) = (8 - x % 8 - 1, y % 8);
+                let (pixel_x, pixel_y) = (8 - (x % 8) - 1, y % 8);
 
                 if last_tile_x.is_none() || last_tile_x.unwrap() != tile_x {
-                    let tile = mem.read(bg_tile_map + (tile_y * 32) + tile_x);
-                    if signed {
-                        let address =
-                            ((bg_tile_data as i16) + (tile as i16) + pixel_y as i16 * 2) as u16;
+                    let tile = mem.read(bg_tile_map + (tile_y as u16 * 32) + tile_x as u16);
+                    if !signed {
+                        let address = (bg_tile_data as i16)
+                            .wrapping_add(tile as i8 as i16 * 16)
+                            .wrapping_add(pixel_y as i16 * 2)
+                            as u16;
                         bottom = mem.read(address);
                         top = mem.read(address + 1);
                     } else {
-                        let address = (bg_tile_data) + (tile as u16) + pixel_y * 2;
+                        let address = (bg_tile_data)
+                            .wrapping_add(tile as u16 * 16)
+                            .wrapping_add(pixel_y as u16 * 2);
                         bottom = mem.read(address);
                         top = mem.read(address + 1);
                     }
@@ -278,7 +293,11 @@ impl LCD {
                 let color = LCD::color_number(pixel_x as u8, top, bottom);
                 bgcolors[i as usize] = color;
                 let pixel = self.regs.bgp.color(color);
-                // window.setpixel i ly pixel
+                self.set_pixel(x as u8, ly, pixel);
+            }
+        } else {
+            for i in 0..SCREEN_SIZE.0 {
+                self.set_pixel(i, ly as u8, 0xff);
             }
         }
 
@@ -289,8 +308,38 @@ impl LCD {
             0x9800
         };
         if self.regs.lcdc.window_display_enable && self.regs.wx <= 166 && self.regs.wy <= ly {
-            let y = ly.overflowing_sub(self.regs.wy).0;
-            // TODO
+            let y = ly.wrapping_sub(self.regs.wy);
+            let (mut bottom, mut top) = (0x00, 0x00);
+            let mut last_tile_x: Option<u8> = None;
+            for i in self.regs.wx.wrapping_sub(7)..SCREEN_SIZE.0 {
+                let x = i.wrapping_sub(self.regs.wx).wrapping_add(7);
+                let (tile_x, tile_y) = (x / 8, y / 8);
+                let (pixel_x, pixel_y) = (8 - (x % 8) - 1, y % 8);
+
+                if last_tile_x.is_none() || last_tile_x.unwrap() != tile_x {
+                    let tile = mem.read(win_tile_map + (tile_y as u16 * 32) + tile_x as u16);
+                    if !signed {
+                        let address = (bg_tile_data as i16)
+                            .wrapping_add(tile as i8 as i16 * 16)
+                            .wrapping_add(pixel_y as i16 * 2)
+                            as u16;
+                        bottom = mem.read(address);
+                        top = mem.read(address + 1);
+                    } else {
+                        let address = (bg_tile_data)
+                            .wrapping_add(tile as u16 * 16)
+                            .wrapping_add(pixel_y as u16 * 2);
+                        bottom = mem.read(address);
+                        top = mem.read(address + 1);
+                    }
+                    last_tile_x = Some(tile_x);
+                }
+
+                let color = LCD::color_number(pixel_x as u8, top, bottom);
+                bgcolors[i as usize] = color;
+                let pixel = self.regs.bgp.color(color);
+                self.set_pixel(x as u8, ly, pixel);
+            }
         }
 
         // Sprites
@@ -300,7 +349,7 @@ impl LCD {
             SpriteSize::Small => 1,
         };
         for info in sprites.iter().rev() {
-            let mut pixel_y = ly - info.y + 16;
+            let mut pixel_y = ly.overflowing_sub(info.y).0.overflowing_add(16).0;
             let obp = if info.flags & 0x10 != 0 {
                 self.regs.obp1
             } else {
@@ -336,10 +385,32 @@ impl LCD {
                 let address = 0x8000 + sprite_tile as u16 * 16 + pixel_y as u16 * 2;
                 let bottom = mem.read(address);
                 let top = mem.read(address + 1);
-                for x in 0..8 {
-                    // TODO
+                for x in (0..8)
+                    .filter(|&x| info.x.overflowing_add(x).0.overflowing_sub(8).0 < SCREEN_SIZE.0)
+                {
+                    let mut pixel_x = 8u8.overflowing_sub(x % 8).0.overflowing_sub(1).0;
+                    if reverse_x {
+                        pixel_x = 8u8.overflowing_sub(pixel_x).0.overflowing_sub(1).0;
+                    }
+                    let color = LCD::color_number(pixel_x as u8, top, bottom);
+                    if color != 0x00
+                        && !(behind
+                            && bgcolors[info.x.overflowing_add(x).0.overflowing_sub(8).0 as usize]
+                                > 0)
+                    {
+                        let pixel = self.regs.bgp.color(color);
+                        self.set_pixel(x as u8, ly, pixel);
+                    }
                 }
             }
+        }
+    }
+
+    fn set_pixel(&mut self, x: u8, y: u8, pixel: u8) {
+        let (x, y, width) = (x as usize, y as usize, SCREEN_SIZE.0 as usize);
+        // write in rgba, don't touch a
+        for i in 0..3 {
+            self.screen[(y * width * 4) + (x * 4) + i] = pixel;
         }
     }
 
@@ -348,7 +419,7 @@ impl LCD {
             .map(|i| SpriteInfo::from_memory(mem, i))
             .filter(|info| {
                 info.y == 0
-                    || info.y >= 160
+                    || info.y >= SCREEN_SIZE.0
                     || ly < info.y.overflowing_sub(16).0
                     || ly
                         >= info

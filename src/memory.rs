@@ -3,8 +3,7 @@ use std::{fs::File, io::Read, path::Path};
 
 pub struct Memory {
     cart: Cartridge,
-    work_ram: [u8; 0x2000],
-    work_ram_banks: Vec<Vec<u8>>,
+    work_ram: [u8; 0x8000],
     external_ram: [u8; 0x2000],
     high_ram: [u8; 0x7f],
     video: [u8; 0x4000],
@@ -27,8 +26,7 @@ impl Memory {
     pub fn new() -> Self {
         Self {
             cart: Cartridge::new(),
-            work_ram: [0; 0x2000],
-            work_ram_banks: Vec::new(),
+            work_ram: [0; 0x8000],
             external_ram: [0; 0x2000],
             high_ram: [0; 0x7f],
             video: [0; 0x4000],
@@ -38,7 +36,7 @@ impl Memory {
             booting: false,
             rom_ram_mode: 0,
             rom_bank: 0,
-            work_ram_bank: 0,
+            work_ram_bank: 1,
             external_ram_bank: 0,
             video_bank: 0,
             external_ram_enabled: false,
@@ -54,7 +52,7 @@ impl Memory {
     }
 
     pub fn with_bootrom(mut self, data: &[u8]) -> Self {
-        self.booting = false;
+        self.booting = true;
         self.bootrom = data.to_vec();
         self
     }
@@ -76,7 +74,7 @@ impl Memory {
 
     pub fn read(&self, address: u16) -> u8 {
         match address {
-            0x0000..=0x0ff => {
+            0x0000..=0x00ff => {
                 if self.booting {
                     self.bootrom[address as usize]
                 } else {
@@ -100,17 +98,14 @@ impl Memory {
                     0
                 }
             }
-            0xc000..=0xcfff => self.work_ram[address as usize - 0xc000],
-            0xd000..=0xdfff => {
-                if self.work_ram_bank == 0 {
-                    self.work_ram[address as usize - 0xc000]
-                } else {
-                    self.work_ram_banks[self.work_ram_bank as usize - 1][address as usize - 0xd000]
-                }
+            0xc000..=0xcfff | 0xe000..=0xefff => self.work_ram[address as usize & 0x0fff],
+            0xd000..=0xdfff | 0xf000..=0xfdff => {
+                self.work_ram[(self.work_ram_bank as usize * 0x1000) | address as usize & 0x0fff]
             }
-            0xe000..=0xfdff => self.read(address - 0x2000),
             0xfe00..=0xfe9f => self.oam[address as usize - 0xfe00],
-            0xfea0..=0xff7f => 0,
+            0xfea0..=0xfeff => 0,
+            0xff70 => self.work_ram_bank,
+            0xff00..=0xff7f => 0xff,
             0xff80..=0xfffe => self.high_ram[address as usize - 0xff80],
             0xffff => 0,
         }
@@ -186,20 +181,27 @@ impl Memory {
                     self.external_ram[address as usize] = value;
                 }
             }
-            0xc000..=0xcfff => self.work_ram[address as usize - 0xc000] = value,
-            0xd000..=0xdfff => {
-                if self.work_ram_bank == 0 {
-                    self.work_ram[address as usize - 0xc000] = value;
-                } else {
-                    self.work_ram_banks[self.work_ram_bank as usize - 1]
-                        [address as usize - 0xd000] = value;
+            0xc000..=0xcfff | 0xe000..=0xefff => self.work_ram[address as usize & 0x0fff] = value,
+            0xd000..=0xdfff | 0xf000..=0xfdff => {
+                self.work_ram[(self.work_ram_bank as usize * 0x1000) | address as usize & 0x0fff] =
+                    value
+            }
+            0xfe00..=0xfe9f => self.oam[address as usize - 0xfe00] = value,
+            0xfea0..=0xfeff => {}
+            0xff70 => {
+                self.work_ram_bank = match value & 0x07 {
+                    0 => 1,
+                    n => n,
                 }
             }
-            0xe000..=0xfdff => self.write(address - 0x2000, value),
-            0xfe00..=0xfe9f => self.oam[address as usize - 0xfe00] = value,
+            0xff00..=0xff7f => {}
             0xff80..=0xfffe => self.high_ram[address as usize - 0xff80] = value,
-            _ => {}
+            0xffff => panic!("tried accessing regs"),
         }
+    }
+
+    pub fn has_bootrom(&self) -> bool {
+        !self.bootrom.is_empty()
     }
 
     pub fn disable_booting(&mut self) {

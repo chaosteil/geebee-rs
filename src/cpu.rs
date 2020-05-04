@@ -10,16 +10,20 @@ pub struct CPU {
     regs: Registers,
     interrupts: Interrupts,
     timer: timer::Timer,
+    joypad: u8,
 
     serial: Vec<u8>,
     halt: bool,
     sp: u16,
     pc: u16,
+
     sb: u8,
+    sc: u8,
 }
 
 impl CPU {
     pub fn new(memory: Memory, lcd: LCD) -> Self {
+        let has_bootrom = memory.has_bootrom();
         Self {
             memory,
             lcd,
@@ -27,10 +31,12 @@ impl CPU {
             interrupts: Interrupts::default(),
             timer: timer::Timer::new(),
             serial: Vec::new(),
+            joypad: 0,
             halt: false,
             sp: 0xfffe,
-            pc: 0x0100,
+            pc: if has_bootrom { 0 } else { 0x0100 },
             sb: 0,
+            sc: 0,
         }
     }
 
@@ -47,8 +53,23 @@ impl CPU {
             .advance(&mut self.memory, &mut self.interrupts, timing);
     }
 
+    pub fn lcd(&self) -> &LCD {
+        &self.lcd
+    }
+
     fn handle_instruction(&mut self) -> timer::Timing {
+        let pc = self.pc;
         let op = self.read_pc();
+        // println!(
+        //     "{:x} {:x} af: {:x} bc: {:x} de: {:x} hl: {:x} sp: {:x}",
+        //     pc,
+        //     op,
+        //     self.regs.af(),
+        //     self.regs.bc(),
+        //     self.regs.de(),
+        //     self.regs.hl(),
+        //     self.sp,
+        // );
         self.handle_op(op)
     }
 
@@ -82,6 +103,9 @@ impl CPU {
 
     fn read(&mut self, address: u16) -> u8 {
         match address {
+            0xff00 => self.joypad,
+            0xff01 => self.sb,
+            0xff02 => self.sc,
             0xff04 => self.timer.div(),
             0xff05 => self.timer.tima(),
             0xff06 => self.timer.tma(),
@@ -96,12 +120,19 @@ impl CPU {
 
     fn read_pc(&mut self) -> u8 {
         let value = self.read(self.pc);
+        // println!("  pc: {:x} {:x}", self.pc, value);
         self.pc = self.pc.overflowing_add(1).0;
         value
     }
 
     fn write(&mut self, address: u16, value: u8) {
         match address {
+            0xff00 => self.joypad = value,
+            0xff01 => self.sb = value,
+            0xff02 => {
+                self.serial.push(self.sb);
+                self.interrupts.flag |= 0x08;
+            }
             0xff04 => self.timer.reset_div(),
             0xff05 => self.timer.set_tima(value),
             0xff06 => self.timer.set_tma(value),
@@ -112,11 +143,6 @@ impl CPU {
                 if value != 0 {
                     self.memory.disable_booting()
                 }
-            }
-            0xff01 => self.sb = value,
-            0xff02 => {
-                self.serial.push(self.sb);
-                self.interrupts.flag |= 0x08;
             }
             0xffff => self.interrupts.enable = value,
             _ => self.memory.write(address, value),
@@ -136,7 +162,7 @@ impl CPU {
             0xff43 => regs.scx,
             0xff44 => regs.ly,
             0xff45 => regs.lyc,
-            0xff46 => 0,
+            0xff46 => 0xff,
             0xff47 => regs.bgp.into(),
             0xff48 => regs.obp0.into(),
             0xff49 => regs.obp1.into(),
@@ -153,7 +179,7 @@ impl CPU {
             0xff41 => regs.stat = value.into(),
             0xff42 => regs.scy = value,
             0xff43 => regs.scx = value,
-            0xff44 => regs.ly = value,
+            0xff44 => {}
             0xff45 => regs.lyc = value,
             0xff46 => {
                 let start = (value as u16) << 8;
@@ -203,6 +229,19 @@ pub struct Registers {
 }
 
 impl Registers {
+    fn new_boot() -> Self {
+        Self {
+            a: 0x01,
+            f: 0xb0.into(),
+            b: 0x00,
+            c: 0x13,
+            d: 0x00,
+            e: 0xd8,
+            h: 0x14,
+            l: 0x4d,
+        }
+    }
+
     fn af(&self) -> u16 {
         bytes::assemble(self.a, self.f.into())
     }
@@ -1292,6 +1331,7 @@ mod test {
     #[test]
     fn op_push_pop() {
         let mut cpu = new_cpu(&[]);
+        cpu.sp = 0xfffe;
         cpu.op_push(0x0102);
         assert_eq!(cpu.sp, 0xfffc);
         assert_eq!(cpu.op_pop().0, 0x0102);
