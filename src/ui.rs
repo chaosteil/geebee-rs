@@ -21,7 +21,9 @@ pub fn launch(mut cpu: CPU) -> Result<(), Box<dyn std::error::Error>> {
     )
     .unwrap();
     while let Some(e) = window.next() {
-        cpu.cycle();
+        if let Some(_) = e.update_args() {
+            cpu.cycle();
+        }
         window.draw_2d(&e, |c, g, d| {
             texture_context.encoder.flush(d);
             let screen = cpu.lcd().screen();
