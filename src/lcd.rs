@@ -13,7 +13,6 @@ pub struct LCD {
     mode_timing: u16,
 
     screen: Vec<u8>,
-    i: u16,
 }
 
 #[derive(PartialEq, Copy, Clone)]
@@ -129,7 +128,6 @@ impl LCD {
             enabled: false,
             mode_timing: 0,
             screen: vec![0xff; 4 * SCREEN_SIZE.0 as usize * SCREEN_SIZE.1 as usize],
-            i: 0,
         }
     }
 
@@ -402,7 +400,7 @@ impl LCD {
                             && bgcolors[info.x.overflowing_add(x).0.overflowing_sub(8).0 as usize]
                                 > 0)
                     {
-                        let pixel = self.regs.bgp.color(color);
+                        let pixel = obp.color(color);
                         self.set_pixel(x as u8, ly, pixel);
                     }
                 }
