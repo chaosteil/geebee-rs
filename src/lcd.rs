@@ -111,10 +111,10 @@ impl SpriteInfo {
     fn from_memory(mem: &Memory, id: u8) -> Self {
         let id = id as u16;
         Self {
-            y: mem.read(0xff00 + id * 4),
-            x: mem.read(0xff00 + id * 4 + 1),
-            tile: mem.read(0xff00 + id * 4 + 2),
-            flags: mem.read(0xff00 + id * 4 + 3),
+            y: mem.read(0xfe00 + id * 4),
+            x: mem.read(0xfe00 + id * 4 + 1),
+            tile: mem.read(0xfe00 + id * 4 + 2),
+            flags: mem.read(0xfe00 + id * 4 + 3),
         }
     }
 }
