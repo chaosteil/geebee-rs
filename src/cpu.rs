@@ -420,8 +420,8 @@ impl CPU {
     }
 
     fn op_daa(&mut self) -> timer::Timing {
-        let mut carry = false;
         let mut adjust = 0;
+        let mut carry = false;
 
         if self.regs.f.half_carry || (!self.regs.f.add_sub && (self.regs.a & 0x0f) > 0x09) {
             adjust |= 0x06;
@@ -442,67 +442,42 @@ impl CPU {
     }
 
     fn op_add_hl(&mut self, value: u16) -> timer::Timing {
-        self.regs.f.add_sub = false;
-        let (result, carry) = self.regs.hl().overflowing_add(value);
-        self.regs.f.carry = carry;
+        let result = self.regs.hl().wrapping_add(value);
+        self.regs.f.carry = (self.regs.hl() & 0x00ff) + (value & 0x00ff) > 0x00ff;
         self.regs.f.half_carry = (self.regs.hl() & 0x07ff) + (value & 0x07ff) > 0x07ff;
         self.regs.set_hl(result);
         8
     }
 
     fn op_add(&mut self, value: u8) -> timer::Timing {
-        let (result, carry) = self.regs.a.overflowing_add(value);
-        self.regs.f.add_sub = false;
-        self.regs.f.carry = carry;
-        self.regs.f.half_carry = (self.regs.a & 0x0f) + (value & 0x0f) > 0x0f;
-        self.regs.f.zero = result == 0;
-        self.regs.a = result;
+        self.regs.f.carry = false;
+        self.op_adc(value);
         4
     }
 
     fn op_adc(&mut self, value: u8) -> timer::Timing {
-        let c = self.regs.f.carry;
-        let (result, carry) = self.regs.a.overflowing_add(value);
-        let (result, carry) = if c {
-            let (result, cf) = result.overflowing_add(1);
-            (result, carry || cf)
-        } else {
-            (result, carry)
-        };
+        let c = if self.regs.f.carry { 1 } else { 0 };
         self.regs.f.add_sub = false;
-        self.regs.f.carry = carry;
-        self.regs.f.half_carry =
-            ((self.regs.a & 0x0f) + (value & 0x0f) + if c { 1 } else { 0 }) > 0x0f;
-        self.regs.f.zero = result == 0;
-        self.regs.a = result;
+        self.regs.f.carry = (self.regs.a as u16) + (value as u16) + (c as u16) > 0xff;
+        self.regs.f.half_carry = (self.regs.a & 0x0f) + (value & 0x0f) + c > 0x0f;
+        self.regs.a = self.regs.a.wrapping_add(value).wrapping_add(c);
+        self.regs.f.zero = self.regs.a == 0;
         4
     }
 
     fn op_sub(&mut self, value: u8) -> timer::Timing {
-        let (result, carry) = self.regs.a.overflowing_sub(value);
-        self.regs.f.add_sub = true;
-        self.regs.f.carry = carry;
-        self.regs.f.half_carry = (self.regs.a & 0xf0).overflowing_sub(value & 0xf0).0 <= 0x0f;
-        self.regs.f.zero = result == 0;
-        self.regs.a = result;
+        self.regs.f.carry = false;
+        self.op_sbc(value);
         4
     }
 
     fn op_sbc(&mut self, value: u8) -> timer::Timing {
-        let (result, carry) = self.regs.a.overflowing_sub(value);
-        let (result, carry) = if self.regs.f.carry {
-            let (result, carry_flag) = result.overflowing_sub(1);
-            (result, carry || carry_flag)
-        } else {
-            (result, carry)
-        };
+        let c = if self.regs.f.carry { 1 } else { 0 };
         self.regs.f.add_sub = true;
-        self.regs.f.half_carry = (self.regs.a & 0xf0)
-            .wrapping_sub((value & 0xf0).wrapping_sub(if self.regs.f.carry { 1 } else { 0 }))
-            <= 0xf0;
-        self.regs.f.carry = carry;
-        self.regs.f.zero = result == 0;
-        self.regs.a = result;
+        self.regs.f.carry = (self.regs.a as u16) < (value as u16) + (c as u16);
+        self.regs.f.half_carry = (self.regs.a & 0x0f) < (value & 0x0f) + c;
+        self.regs.a = self.regs.a.wrapping_sub(value).wrapping_sub(c);
+        self.regs.f.zero = self.regs.a == 0;
         4
     }
 
@@ -578,15 +553,12 @@ impl CPU {
     }
 
     fn op_add_sp(&mut self) -> timer::Timing {
-        let value = self.read_pc() as i8 as i16;
-        let sp = self.sp as i16;
-
-        self.regs.f.carry = (sp & 0x00ff) + (value & 0x00ff) > 0x00ff;
-        self.regs.f.half_carry = (sp & 0x000f) + (value & 0x000f) > 0x000f;
+        let value = self.read_pc() as i8 as i16 as u16;
+        self.regs.f.carry = (self.sp & 0x00ff) + (value & 0x00ff) > 0x00ff;
+        self.regs.f.half_carry = (self.sp & 0x000f) + (value & 0x000f) > 0x000f;
         self.regs.f.zero = false;
         self.regs.f.add_sub = false;
-
-        self.sp = sp.wrapping_add(value) as u16;
+        self.sp = self.sp.wrapping_add(value);
         16
     }
 
