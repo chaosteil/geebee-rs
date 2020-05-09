@@ -196,7 +196,7 @@ impl Memory {
                     n => n,
                 }
             }
-            0xff00..=0xff7f => self.io[address as usize - 0xff00] = value,
+            0xff00..=0xff6f | 0xff71..=0xff7f => self.io[address as usize - 0xff00] = value,
             0xff80..=0xfffe => self.high_ram[address as usize - 0xff80] = value,
             0xffff => panic!("tried accessing regs"),
         }

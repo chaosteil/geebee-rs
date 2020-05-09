@@ -21,7 +21,7 @@ pub fn launch(mut cpu: CPU) -> Result<(), Box<dyn std::error::Error>> {
     )
     .unwrap();
     while let Some(e) = window.next() {
-        if let Some(_) = e.update_args() {
+        if e.update_args().is_some() {
             cpu.cycle();
         }
         window.draw_2d(&e, |c, g, d| {
