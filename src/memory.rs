@@ -8,6 +8,7 @@ pub struct Memory {
     high_ram: [u8; 0x7f],
     video: [u8; 0x4000],
     oam: [u8; 0xa0],
+    io: [u8; 0x80],
     bootrom: Vec<u8>,
 
     booting: bool,
@@ -31,11 +32,12 @@ impl Memory {
             high_ram: [0; 0x7f],
             video: [0; 0x4000],
             oam: [0; 0xa0],
+            io: [0; 0x80],
             bootrom: Vec::new(),
 
             booting: false,
             rom_ram_mode: 0,
-            rom_bank: 0,
+            rom_bank: 1,
             work_ram_bank: 1,
             external_ram_bank: 0,
             video_bank: 0,
@@ -83,8 +85,8 @@ impl Memory {
             }
             0x0100..=0x3fff => self.cart.data()[address as usize],
             0x4000..=0x7fff => {
-                let address = (0x4000 * self.rom_bank as u16) + (address - 0x4000);
-                self.cart.data()[address as usize]
+                let address = (0x4000 * (self.rom_bank as usize)) + (address as usize - 0x4000);
+                self.cart.data()[address] // TODO: banking
             }
             0x8000..=0x9fff => {
                 let address = (0x8000 * self.video_bank as u16) + (address - 0x8000);
@@ -105,7 +107,7 @@ impl Memory {
             0xfe00..=0xfe9f => self.oam[address as usize - 0xfe00],
             0xfea0..=0xfeff => 0,
             0xff70 => self.work_ram_bank,
-            0xff00..=0xff7f => 0xff,
+            0xff00..=0xff7f => self.io[address as usize - 0xff00],
             0xff80..=0xfffe => self.high_ram[address as usize - 0xff80],
             0xffff => 0,
         }
@@ -183,8 +185,8 @@ impl Memory {
             }
             0xc000..=0xcfff | 0xe000..=0xefff => self.work_ram[address as usize & 0x0fff] = value,
             0xd000..=0xdfff | 0xf000..=0xfdff => {
-                self.work_ram[(self.work_ram_bank as usize * 0x1000) | address as usize & 0x0fff] =
-                    value
+                self.work_ram
+                    [(self.work_ram_bank as usize * 0x1000) | (address as usize & 0x0fff)] = value
             }
             0xfe00..=0xfe9f => self.oam[address as usize - 0xfe00] = value,
             0xfea0..=0xfeff => {}
@@ -194,7 +196,7 @@ impl Memory {
                     n => n,
                 }
             }
-            0xff00..=0xff7f => {}
+            0xff00..=0xff7f => self.io[address as usize - 0xff00] = value,
             0xff80..=0xfffe => self.high_ram[address as usize - 0xff80] = value,
             0xffff => panic!("tried accessing regs"),
         }
