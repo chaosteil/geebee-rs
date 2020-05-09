@@ -482,7 +482,7 @@ impl CPU {
     }
 
     fn op_and(&mut self, value: u8) -> timer::Timing {
-        self.regs.a &= value;
+        self.regs.a = self.regs.a & value;
         self.regs.f.zero = self.regs.a == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = true;
@@ -491,7 +491,7 @@ impl CPU {
     }
 
     fn op_xor(&mut self, value: u8) -> timer::Timing {
-        self.regs.a ^= value;
+        self.regs.a = self.regs.a ^ value;
         self.regs.f.zero = self.regs.a == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;
@@ -500,7 +500,7 @@ impl CPU {
     }
 
     fn op_or(&mut self, value: u8) -> timer::Timing {
-        self.regs.a |= value;
+        self.regs.a = self.regs.a | value;
         self.regs.f.zero = self.regs.a == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;
@@ -993,21 +993,21 @@ impl CPU {
             }
             0x17 => { let (value, timing) = self.op_rlc(self.regs.a); self.regs.a = value; timing }
 
-            0x18 => { let (value, timing) = self.op_rlc(self.regs.b); self.regs.b = value; timing }
-            0x19 => { let (value, timing) = self.op_rlc(self.regs.c); self.regs.c = value; timing }
-            0x1a => { let (value, timing) = self.op_rlc(self.regs.d); self.regs.d = value; timing }
-            0x1b => { let (value, timing) = self.op_rlc(self.regs.e); self.regs.e = value; timing }
-            0x1c => { let (value, timing) = self.op_rlc(self.regs.h); self.regs.h = value; timing }
-            0x1d => { let (value, timing) = self.op_rlc(self.regs.l); self.regs.l = value; timing }
+            0x18 => { let (value, timing) = self.op_rrc(self.regs.b); self.regs.b = value; timing }
+            0x19 => { let (value, timing) = self.op_rrc(self.regs.c); self.regs.c = value; timing }
+            0x1a => { let (value, timing) = self.op_rrc(self.regs.d); self.regs.d = value; timing }
+            0x1b => { let (value, timing) = self.op_rrc(self.regs.e); self.regs.e = value; timing }
+            0x1c => { let (value, timing) = self.op_rrc(self.regs.h); self.regs.h = value; timing }
+            0x1d => { let (value, timing) = self.op_rrc(self.regs.l); self.regs.l = value; timing }
             0x1e => {
                 self.advance_timer(4);
                 let value = self.read(self.regs.hl());
                 self.advance_timer(4);
-                let value = self.op_rlc(value).0;
+                let value = self.op_rrc(value).0;
                 self.write(self.regs.hl(), value);
                 8
             }
-            0x1f => { let (value, timing) = self.op_rlc(self.regs.a); self.regs.a = value; timing }
+            0x1f => { let (value, timing) = self.op_rrc(self.regs.a); self.regs.a = value; timing }
 
             0x20 => { let (value, timing) = self.op_sll(self.regs.b); self.regs.b = value; timing }
             0x21 => { let (value, timing) = self.op_sll(self.regs.c); self.regs.c = value; timing }
