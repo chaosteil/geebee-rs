@@ -43,6 +43,7 @@ impl Cartridge {
         };
         self.sgb = data[0x0146] == 0x03;
         self.data = data.to_vec();
+        println!("Cart Data: {}, {:?}", self.title(), self.cart_type());
         Ok(self)
     }
 
@@ -71,7 +72,7 @@ impl Cartridge {
     }
 }
 
-#[derive(Default, Clone)]
+#[derive(Default, Debug, Clone)]
 pub struct CartType {
     pub controller: Controller,
     pub ram: bool,
@@ -80,7 +81,7 @@ pub struct CartType {
     pub rumble: bool,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Controller {
     None,
     MBC1,

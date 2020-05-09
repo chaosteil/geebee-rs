@@ -27,7 +27,7 @@ impl CPU {
         Self {
             memory,
             lcd,
-            regs: Registers::default(),
+            regs: Registers::new_boot(),
             interrupts: Interrupts::default(),
             timer: timer::Timer::new(),
             serial: Vec::new(),
@@ -67,18 +67,7 @@ impl CPU {
     }
 
     fn handle_instruction(&mut self) -> timer::Timing {
-        let pc = self.pc;
         let op = self.read_pc();
-        // println!(
-        //     "{:04x} {:x} af: {:04x} bc: {:04x} de: {:04x} hl: {:04x} sp: {:04x}",
-        //     pc,
-        //     op,
-        //     self.regs.af(),
-        //     self.regs.bc(),
-        //     self.regs.de(),
-        //     self.regs.hl(),
-        //     self.sp,
-        // );
         self.handle_op(op)
     }
 
@@ -167,10 +156,6 @@ impl CPU {
             0xffff => self.interrupts.enable = value,
             _ => self.memory.write(address, value),
         }
-    }
-
-    pub fn serial(&self) -> &[u8] {
-        &self.serial
     }
 
     fn handle_lcd_read(&mut self, address: u16) -> u8 {
@@ -398,7 +383,7 @@ impl CPU {
 
     fn op_rl(&mut self, value: u8) -> (u8, timer::Timing) {
         self.regs.f.carry = value & 0x80 != 0;
-        let value = value << 1 | if self.regs.f.carry { 1 } else { 0 };
+        let value = (value << 1) | if self.regs.f.carry { 1 } else { 0 };
         self.regs.f.zero = value == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;
@@ -408,7 +393,7 @@ impl CPU {
     fn op_rlc(&mut self, value: u8) -> (u8, timer::Timing) {
         let carry = self.regs.f.carry;
         self.regs.f.carry = value & 0x80 != 0;
-        let value = value << 1 | if carry { 0x01 } else { 0x00 };
+        let value = (value << 1) | if carry { 1 } else { 0 };
         self.regs.f.zero = value == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;
@@ -417,7 +402,7 @@ impl CPU {
 
     fn op_rr(&mut self, value: u8) -> (u8, timer::Timing) {
         self.regs.f.carry = value & 0x01 != 0;
-        let value = value.rotate_right(1);
+        let value = (value >> 1) | if self.regs.f.carry { 0x80 } else { 0x00 };
         self.regs.f.zero = value == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;
@@ -427,7 +412,7 @@ impl CPU {
     fn op_rrc(&mut self, value: u8) -> (u8, timer::Timing) {
         let carry = self.regs.f.carry;
         self.regs.f.carry = value & 0x01 != 0;
-        let value = value >> 1 | (if carry { 0x80 } else { 0x00 });
+        let value = (value >> 1) | (if carry { 0x80 } else { 0x00 });
         self.regs.f.zero = value == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;
@@ -593,14 +578,15 @@ impl CPU {
     }
 
     fn op_add_sp(&mut self) -> timer::Timing {
-        let value = self.read_pc() as i8 as i16 as u16;
+        let value = self.read_pc() as i8 as i16;
+        let sp = self.sp as i16;
 
-        self.regs.f.carry = (self.sp & 0x00ff) + (value & 0x00ff) > 0x00ff;
-        self.regs.f.half_carry = (self.sp & 0x000f) + (value & 0x000f) > 0x000f;
+        self.regs.f.carry = (sp & 0x00ff) + (value & 0x00ff) > 0x00ff;
+        self.regs.f.half_carry = (sp & 0x000f) + (value & 0x000f) > 0x000f;
         self.regs.f.zero = false;
         self.regs.f.add_sub = false;
 
-        self.sp = self.sp.wrapping_add(value);
+        self.sp = sp.wrapping_add(value) as u16;
         16
     }
 
