@@ -51,7 +51,7 @@ impl CPU {
 
     pub fn step(&mut self) {
         let timing = if let Some(timing) = self.handle_interrupts() {
-            timing // if halt stopped, increase timer
+            timing
         } else if self.halt {
             4
         } else {
@@ -64,6 +64,19 @@ impl CPU {
 
     pub fn lcd(&self) -> &LCD {
         &self.lcd
+    }
+
+    #[allow(dead_code)]
+    fn dump(&self) {
+        println!(
+            "{:04x} af: {:04x} bc: {:04x} de: {:04x} hl: {:04x} sp: {:04x}",
+            self.pc,
+            self.regs.af(),
+            self.regs.bc(),
+            self.regs.de(),
+            self.regs.hl(),
+            self.sp,
+        );
     }
 
     fn handle_instruction(&mut self) -> timer::Timing {
@@ -122,18 +135,6 @@ impl CPU {
         value
     }
 
-    // fn dump(&self) {
-    //     println!(
-    //         "{:04x} af: {:04x} bc: {:04x} de: {:04x} hl: {:04x} sp: {:04x}",
-    //         self.pc,
-    //         self.regs.af(),
-    //         self.regs.bc(),
-    //         self.regs.de(),
-    //         self.regs.hl(),
-    //         self.sp,
-    //     );
-    // }
-
     fn write(&mut self, address: u16, value: u8) {
         match address {
             0xff00 => self.joypad = value,
@@ -181,17 +182,17 @@ impl CPU {
         let mut regs = self.lcd.regs();
         match address {
             0xff40 => regs.lcdc = value.into(),
-            0xff41 => regs.stat = value.into(),
+            0xff41 => regs.stat.from(value),
             0xff42 => regs.scy = value,
             0xff43 => regs.scx = value,
-            0xff44 => {}
+            0xff44 => regs.ly = 0,
             0xff45 => regs.lyc = value,
             0xff46 => {
                 let start = (value as u16) << 8;
-                let end = (value as u16) << 8 | 0x9f;
-                for (i, dest) in (start..=end).enumerate() {
+                let end = ((value as u16) << 8) | 0x009f;
+                for dest in start..=end {
                     let v = self.read(dest);
-                    self.write(0xfe00 + i as u16, v);
+                    self.write(0xfe00 | (dest & 0xff) as u16, v);
                 }
             }
             0xff47 => regs.bgp = value.into(),
@@ -442,9 +443,10 @@ impl CPU {
     }
 
     fn op_add_hl(&mut self, value: u16) -> timer::Timing {
-        let result = self.regs.hl().wrapping_add(value);
-        self.regs.f.carry = (self.regs.hl() & 0x00ff) + (value & 0x00ff) > 0x00ff;
+        let (result, carry) = self.regs.hl().overflowing_add(value);
+        self.regs.f.add_sub = false;
         self.regs.f.half_carry = (self.regs.hl() & 0x07ff) + (value & 0x07ff) > 0x07ff;
+        self.regs.f.carry = carry;
         self.regs.set_hl(result);
         8
     }
@@ -516,34 +518,37 @@ impl CPU {
     }
 
     fn op_ret(&mut self, jump: bool) -> timer::Timing {
-        if !jump {
-            return 8;
+        if jump {
+            self.pc = self.op_pop().0;
+            20
+        } else {
+            8
         }
-        self.pc = self.op_pop().0;
-        20
     }
 
     fn op_jp(&mut self, jump: bool) -> timer::Timing {
         let low = self.read_pc();
         let high = self.read_pc();
 
-        if !jump {
-            return 12;
+        if jump {
+            self.pc = bytes::assemble(high, low);
+            16
+        } else {
+            12
         }
-        self.pc = bytes::assemble(high, low);
-        16
     }
 
     fn op_call(&mut self, jump: bool) -> timer::Timing {
         let low = self.read_pc();
         let high = self.read_pc();
 
-        if !jump {
-            return 12;
+        if jump {
+            self.op_push(self.pc);
+            self.pc = bytes::assemble(high, low);
+            24
+        } else {
+            12
         }
-        self.op_push(self.pc);
-        self.pc = bytes::assemble(high, low);
-        24
     }
 
     fn op_rst(&mut self, offset: u8) -> timer::Timing {
@@ -676,9 +681,8 @@ impl CPU {
                 let high = self.read_pc();
                 let address = bytes::assemble(high, low);
 
-                let (_, low) = bytes::extract(self.sp);
+                let (high, low) = bytes::extract(self.sp);
                 self.write(address, low);
-                let (high, _) = bytes::extract(self.sp);
                 self.write(address.wrapping_add(1), high);
                 20
             }
@@ -1103,9 +1107,9 @@ impl CPU {
                         self.advance_timer(4);
                         let value = self.read(self.regs.hl());
                         self.advance_timer(4);
-                        let (value, timing) = self.op_res(value, bit);
+                        let (value, _) = self.op_res(value, bit);
                         self.write(self.regs.hl(), value);
-                        timing
+                        8
                     }
                     7 => { let (value, timing) = self.op_res(self.regs.a, bit); self.regs.a = value; timing }
                     _ => unreachable!(),
@@ -1124,9 +1128,9 @@ impl CPU {
                         self.advance_timer(4);
                         let value = self.read(self.regs.hl());
                         self.advance_timer(4);
-                        let (value, timing) = self.op_set(value, bit);
+                        let (value, _) = self.op_set(value, bit);
                         self.write(self.regs.hl(), value);
-                        timing
+                        8
                     }
                     7 => { let (value, timing) = self.op_set(self.regs.a, bit); self.regs.a = value; timing }
                     _ => unreachable!(),
@@ -1245,139 +1249,12 @@ mod test {
     }
 
     #[test]
-    fn op_rl() {
-        let mut cpu = new_cpu(&[]);
-
-        assert_eq!(cpu.op_rl(0x01).0, 0x02);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, false);
-
-        assert_eq!(cpu.op_rl(0xff).0, 0xfe);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
+    fn op_sp_hl() {
+        let mut cpu = new_cpu(&[0xff]);
+        cpu.sp = 0xffff;
+        cpu.op_add_sp();
+        assert_eq!(cpu.sp, 0xfffe);
+        assert_eq!(cpu.regs.f.half_carry, true);
         assert_eq!(cpu.regs.f.carry, true);
-
-        assert_eq!(cpu.op_rl(0x80).0, 0x01);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, true);
-
-        assert_eq!(cpu.op_rl(0x00).0, 0x01);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, false);
-
-        assert_eq!(cpu.op_rl(0x00).0, 0x00);
-        assert_eq!(cpu.regs.f.zero, true);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, false);
-    }
-
-    #[test]
-    fn op_rlc() {
-        let mut cpu = new_cpu(&[]);
-
-        cpu.regs.f.carry = false;
-        assert_eq!(cpu.op_rlc(0x01).0, 0x02);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, false);
-
-        cpu.regs.f.carry = false;
-        assert_eq!(cpu.op_rlc(0x7f).0, 0xfe);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, false);
-
-        cpu.regs.f.carry = false;
-        assert_eq!(cpu.op_rlc(0x80).0, 0x01);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, true);
-
-        assert_eq!(cpu.op_rlc(0x00).0, 0x00);
-        assert_eq!(cpu.regs.f.zero, true);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, false);
-    }
-
-    #[test]
-    fn op_rr() {
-        let mut cpu = new_cpu(&[]);
-
-        assert_eq!(cpu.regs.f.carry, false);
-        assert_eq!(cpu.op_rr(0x02).0, 0x01);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, false);
-
-        assert_eq!(cpu.op_rr(0x00).0, 0x00);
-        assert_eq!(cpu.regs.f.zero, true);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, false);
-
-        assert_eq!(cpu.op_rr(0x01).0, 0x00);
-        assert_eq!(cpu.regs.f.zero, true);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, true);
-
-        assert_eq!(cpu.op_rr(0x01).0, 0x80);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, true);
-    }
-
-    #[test]
-    fn op_rrc() {
-        let mut cpu = new_cpu(&[]);
-
-        cpu.regs.f.carry = false;
-        assert_eq!(cpu.op_rrc(0x02).0, 0x01);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, false);
-
-        cpu.regs.f.carry = false;
-        assert_eq!(cpu.op_rrc(0x01).0, 0x80);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, true);
-
-        cpu.regs.f.carry = true;
-        assert_eq!(cpu.op_rrc(0x02).0, 0x01);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, false);
-
-        cpu.regs.f.carry = true;
-        assert_eq!(cpu.op_rrc(0x01).0, 0x80);
-        assert_eq!(cpu.regs.f.zero, false);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, true);
-
-        cpu.regs.f.carry = false;
-        assert_eq!(cpu.op_rrc(0x00).0, 0x00);
-        assert_eq!(cpu.regs.f.zero, true);
-        assert_eq!(cpu.regs.f.add_sub, false);
-        assert_eq!(cpu.regs.f.half_carry, false);
-        assert_eq!(cpu.regs.f.carry, false);
     }
 }

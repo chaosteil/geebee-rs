@@ -7,7 +7,6 @@ pub const SCREEN_SIZE: (u8, u8) = (160, 144);
 pub struct LCD {
     regs: Registers,
     done_frame: bool,
-    mode: Mode,
 
     enabled: bool,
     mode_timing: u16,
@@ -25,7 +24,7 @@ enum Mode {
 
 impl Default for Mode {
     fn default() -> Self {
-        Self::HBlank
+        Self::OAM
     }
 }
 
@@ -124,7 +123,6 @@ impl LCD {
         Self {
             regs: Registers::default(),
             done_frame: true,
-            mode: Mode::HBlank,
             enabled: false,
             mode_timing: 0,
             screen: vec![0xff; 4 * SCREEN_SIZE.0 as usize * SCREEN_SIZE.1 as usize],
@@ -149,6 +147,10 @@ impl LCD {
 
     pub fn advance(&mut self, mem: &mut Memory, interrupts: &mut Interrupts, timing: Timing) {
         self.done_frame = false;
+        //Mode 0 is present between 201-207 clks, 2 about 77-83 clks, and 3
+        //about 169-175 clks. A complete cycle through these states takes 456
+        //clks. VBlank lasts 4560 clks. A complete screen refresh occurs every
+        //70224 clks.)
 
         interrupts.flag &= 0xfc;
         mem.set_oam_access(true);
@@ -169,14 +171,16 @@ impl LCD {
         }
 
         self.mode_timing += timing as u16;
-        match self.mode {
+        match self.regs.stat.mode {
             Mode::OAM => {
-                if self.mode_timing >= 79 {
-                    self.mode_timing -= 79;
+                // Mode 2
+                if self.mode_timing >= 80 {
+                    self.mode_timing -= 80;
                     self.set_mode(interrupts, Mode::VRAM);
                 }
             }
             Mode::VRAM => {
+                // Mode 1
                 if self.mode_timing >= 172 {
                     self.mode_timing -= 172;
                     self.set_mode(interrupts, Mode::HBlank);
@@ -184,8 +188,9 @@ impl LCD {
                 }
             }
             Mode::HBlank => {
-                if self.mode_timing >= 205 {
-                    self.mode_timing -= 205;
+                // Mode 0
+                if self.mode_timing >= 204 {
+                    self.mode_timing -= 204;
                     self.regs.ly += 1;
                     self.set_mode(
                         interrupts,
@@ -198,6 +203,7 @@ impl LCD {
                 }
             }
             Mode::VBlank => {
+                // Mode 3
                 if self.mode_timing >= 4560 {
                     self.set_mode(interrupts, Mode::OAM);
                     self.mode_timing -= 4560;
@@ -211,7 +217,7 @@ impl LCD {
 
         self.regs.stat.coincidence = self.regs.ly == self.regs.lyc;
         if self.regs.stat.coincidence && self.regs.stat.lyc_equals_lc {
-            interrupts.flag |= 0x01;
+            interrupts.flag |= 0x02;
         }
         mem.set_oam_access(true);
         mem.set_vram_access(true);
@@ -219,7 +225,7 @@ impl LCD {
             return;
         }
 
-        match self.mode {
+        match self.regs.stat.mode {
             Mode::OAM => {
                 mem.set_oam_access(false);
             }
@@ -232,18 +238,17 @@ impl LCD {
     }
 
     fn set_mode(&mut self, interrupts: &mut Interrupts, mode: Mode) {
-        if self.mode == mode {
+        if self.regs.stat.mode == mode {
             return;
         }
-        self.mode = mode;
         self.regs.stat.mode = mode;
-        if (self.mode == Mode::HBlank && interrupts.flag & 0x08 != 0)
-            || (self.mode == Mode::VBlank && interrupts.flag & 0x10 != 0)
-            || (self.mode == Mode::OAM && interrupts.flag & 0x20 != 0)
+        if (mode == Mode::HBlank && self.regs.stat.mode_0_hblank)
+            || (mode == Mode::VBlank && self.regs.stat.mode_1_vblank)
+            || (mode == Mode::OAM && self.regs.stat.mode_2_oam)
         {
             interrupts.flag |= 0x02;
         }
-        if self.mode == Mode::VBlank {
+        if mode == Mode::VBlank {
             interrupts.flag |= 0x01;
             self.done_frame = true;
         }
@@ -266,9 +271,9 @@ impl LCD {
         if self.regs.lcdc.bg_display {
             let y = ly.wrapping_add(self.regs.scy);
             let mut last_tile_x: Option<u8> = None;
-
             let (mut bottom, mut top) = (0x00, 0x00);
-            for i in 0u8..SCREEN_SIZE.0 {
+
+            for i in 0..SCREEN_SIZE.0 {
                 let x = i.wrapping_add(self.regs.scx);
                 let (tile_x, tile_y) = (x / 8, y / 8);
                 let (pixel_x, pixel_y) = (8 - (x % 8) - 1, y % 8);
@@ -277,13 +282,13 @@ impl LCD {
                     let tile = mem.read(bg_tile_map + (tile_y as u16 * 32) + tile_x as u16);
                     if !signed {
                         let address = (bg_tile_data as i16)
-                            .wrapping_add(tile as i8 as i16 * 16)
-                            .wrapping_add(pixel_y as i16 * 2)
+                            .wrapping_add((tile as i8 as i16 + 128) * 16)
+                            .wrapping_add(pixel_y as i8 as i16 * 2)
                             as u16;
                         bottom = mem.read(address);
                         top = mem.read(address + 1);
                     } else {
-                        let address = (bg_tile_data)
+                        let address = bg_tile_data
                             .wrapping_add(tile as u16 * 16)
                             .wrapping_add(pixel_y as u16 * 2);
                         bottom = mem.read(address);
@@ -309,7 +314,7 @@ impl LCD {
         } else {
             0x9800
         };
-        if self.regs.lcdc.window_display_enable && self.regs.wx <= 166 && self.regs.wy <= ly {
+        if self.regs.lcdc.window_display_enable && self.regs.wx <= 166 && self.regs.wy <= 143 {
             let y = ly.wrapping_sub(self.regs.wy);
             let (mut bottom, mut top) = (0x00, 0x00);
             let mut last_tile_x: Option<u8> = None;
@@ -488,22 +493,12 @@ impl From<LCDC> for u8 {
     }
 }
 
-impl From<u8> for STAT {
-    fn from(f: u8) -> STAT {
-        STAT {
-            lyc_equals_lc: f & 0x40 != 0,
-            mode_2_oam: f & 0x20 != 0,
-            mode_1_vblank: f & 0x10 != 0,
-            mode_0_hblank: f & 0x08 != 0,
-            coincidence: f & 0x04 != 0,
-            mode: match f & 0x03 {
-                0x00 => Mode::HBlank,
-                0x01 => Mode::VBlank,
-                0x02 => Mode::OAM,
-                0x03 => Mode::VRAM,
-                _ => unreachable!(),
-            },
-        }
+impl STAT {
+    pub fn from(&mut self, f: u8) {
+        self.lyc_equals_lc = f & 0x40 != 0;
+        self.mode_2_oam = f & 0x20 != 0;
+        self.mode_1_vblank = f & 0x10 != 0;
+        self.mode_0_hblank = f & 0x08 != 0;
     }
 }
 
@@ -545,9 +540,9 @@ impl MonoPalette {
 impl From<u8> for MonoPalette {
     fn from(f: u8) -> MonoPalette {
         MonoPalette {
-            color3: FromPrimitive::from_u8((f & 0xc0) >> 6).unwrap(),
-            color2: FromPrimitive::from_u8((f & 0x30) >> 4).unwrap(),
-            color1: FromPrimitive::from_u8((f & 0x0c) >> 2).unwrap(),
+            color3: FromPrimitive::from_u8((f >> 6) & 0x03).unwrap(),
+            color2: FromPrimitive::from_u8((f >> 4) & 0x03).unwrap(),
+            color1: FromPrimitive::from_u8((f >> 2) & 0x03).unwrap(),
             color0: FromPrimitive::from_u8(f & 0x03).unwrap(),
         }
     }

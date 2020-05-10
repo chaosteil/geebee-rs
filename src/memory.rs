@@ -86,15 +86,15 @@ impl Memory {
             0x0100..=0x3fff => self.cart.data()[address as usize],
             0x4000..=0x7fff => {
                 let address = (0x4000 * (self.rom_bank as usize)) + (address as usize - 0x4000);
-                self.cart.data()[address] // TODO: banking
+                self.cart.data()[address]
             }
             0x8000..=0x9fff => {
-                let address = (0x8000 * self.video_bank as u16) + (address - 0x8000);
-                self.video[address as usize]
+                // let address = (0x2000 * self.video_bank as u16) + (address - 0x8000);
+                self.video[address as usize - 0x8000]
             }
             0xa000..=0xbfff => {
                 if self.external_ram_enabled {
-                    let address = (0x8000 * self.external_ram_bank as u16) + (address - 0x8000);
+                    let address = (0x1000 * self.external_ram_bank as u16) + (address - 0xa000);
                     self.external_ram[address as usize]
                 } else {
                     0
@@ -174,12 +174,13 @@ impl Memory {
                 _ => {}
             },
             0x8000..=0x9fff => {
-                let address = (0x8000 * self.video_bank as u16) + (address - 0x8000);
-                self.video[address as usize] = value;
+                // let address = (0x2000 * self.video_bank as u16) + (address - 0x8000);
+                // self.video[address as usize] = value;
+                self.video[address as usize - 0x8000] = value;
             }
             0xa000..=0xbfff => {
                 if self.external_ram_enabled {
-                    let address = (0x8000 * self.external_ram_bank as u16) + (address - 0x8000);
+                    let address = (0x1000 * self.external_ram_bank as u16) + (address - 0xa000);
                     self.external_ram[address as usize] = value;
                 }
             }
