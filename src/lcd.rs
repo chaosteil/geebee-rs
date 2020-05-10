@@ -180,7 +180,7 @@ impl LCD {
                 }
             }
             Mode::VRAM => {
-                // Mode 1
+                // Mode 3
                 if self.mode_timing >= 172 {
                     self.mode_timing -= 172;
                     self.set_mode(interrupts, Mode::HBlank);
@@ -203,7 +203,7 @@ impl LCD {
                 }
             }
             Mode::VBlank => {
-                // Mode 3
+                // Mode 1
                 if self.mode_timing >= 4560 {
                     self.set_mode(interrupts, Mode::OAM);
                     self.mode_timing -= 4560;
