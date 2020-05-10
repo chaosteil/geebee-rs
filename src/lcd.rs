@@ -255,8 +255,8 @@ impl LCD {
         }
 
         // BG
-        let signed = self.regs.lcdc.bg_window_tile_data_select;
-        let bg_tile_data: u16 = if signed { 0x8000 } else { 0x9000 };
+        let unsigned = self.regs.lcdc.bg_window_tile_data_select;
+        let bg_tile_data: u16 = if unsigned { 0x8000 } else { 0x9000 };
         let bg_tile_map = if self.regs.lcdc.bg_tile_map_display_select {
             0x9c00
         } else {
@@ -275,9 +275,9 @@ impl LCD {
 
                 if last_tile_x.is_none() || last_tile_x.unwrap() != tile_x {
                     let tile = mem.read(bg_tile_map + (tile_y as u16 * 32) + tile_x as u16);
-                    if !signed {
+                    if !unsigned {
                         let address = (bg_tile_data as i16)
-                            .wrapping_add((tile as i8 as i16) * 16)
+                            .wrapping_add(tile as i8 as i16 * 16)
                             .wrapping_add(pixel_y as i8 as i16 * 2)
                             as u16;
                         bottom = mem.read(address);
@@ -295,7 +295,7 @@ impl LCD {
                 let color = LCD::color_number(pixel_x as u8, top, bottom);
                 bgcolors[i as usize] = color;
                 let pixel = self.regs.bgp.color(color);
-                self.set_pixel(x as u8, ly, pixel);
+                self.set_pixel(i, ly, pixel);
             }
         } else {
             for i in 0..SCREEN_SIZE.0 {
@@ -320,7 +320,7 @@ impl LCD {
 
                 if last_tile_x.is_none() || last_tile_x.unwrap() != tile_x {
                     let tile = mem.read(win_tile_map + (tile_y as u16 * 32) + tile_x as u16);
-                    if signed {
+                    if !unsigned {
                         let address = (bg_tile_data as i16)
                             .wrapping_add(tile as i8 as i16 * 16)
                             .wrapping_add(pixel_y as i8 as i16 * 2)
@@ -328,7 +328,7 @@ impl LCD {
                         bottom = mem.read(address);
                         top = mem.read(address + 1);
                     } else {
-                        let address = (bg_tile_data)
+                        let address = bg_tile_data
                             .wrapping_add(tile as u16 * 16)
                             .wrapping_add(pixel_y as u16 * 2);
                         bottom = mem.read(address);
@@ -340,10 +340,9 @@ impl LCD {
                 let color = LCD::color_number(pixel_x as u8, top, bottom);
                 bgcolors[i as usize] = color;
                 let pixel = self.regs.bgp.color(color);
-                self.set_pixel(x as u8, ly, pixel);
+                self.set_pixel(i, ly, pixel);
             }
         }
-        return;
 
         // Sprites
         let sprites = LCD::get_sprites(&mem, ly, self.regs.lcdc.obj_size);
@@ -352,7 +351,7 @@ impl LCD {
             SpriteSize::Small => 1,
         };
         for info in sprites.iter().rev() {
-            let mut pixel_y = ly.overflowing_sub(info.y).0.overflowing_add(16).0;
+            let mut pixel_y = ly.wrapping_sub(info.y).wrapping_add(16);
             let obp = if info.flags & 0x10 != 0 {
                 self.regs.obp1
             } else {
@@ -375,34 +374,34 @@ impl LCD {
                 }
 
                 if reverse_y {
-                    pixel_y = 8u8.overflowing_sub(pixel_y).0.overflowing_sub(1).0;
+                    pixel_y = 8u8.wrapping_sub(pixel_y).wrapping_sub(1);
                     if self.regs.lcdc.obj_size == SpriteSize::Large {
                         pixel_y = if i == 1 {
-                            pixel_y.overflowing_sub(8).0
+                            pixel_y.wrapping_sub(8)
                         } else {
-                            pixel_y.overflowing_add(8).0
+                            pixel_y.wrapping_add(8)
                         };
                     }
                 }
 
-                let address = 0x8000 + sprite_tile as u16 * 16 + pixel_y as u16 * 2;
+                let address = 0x8000u16
+                    .wrapping_add((sprite_tile as i8 as i16 as u16).wrapping_mul(16) as u16)
+                    + pixel_y as u16 * 2;
                 let bottom = mem.read(address);
                 let top = mem.read(address + 1);
-                for x in (0..8)
-                    .filter(|&x| info.x.overflowing_add(x).0.overflowing_sub(8).0 < SCREEN_SIZE.0)
+                for x in (0..8).filter(|&x| info.x.wrapping_add(x).wrapping_sub(8) < SCREEN_SIZE.0)
                 {
-                    let mut pixel_x = 8u8.overflowing_sub(x % 8).0.overflowing_sub(1).0;
+                    let mut pixel_x = 8u8.wrapping_sub(x % 8).wrapping_sub(1);
                     if reverse_x {
-                        pixel_x = 8u8.overflowing_sub(pixel_x).0.overflowing_sub(1).0;
+                        pixel_x = 8u8.wrapping_sub(pixel_x).wrapping_sub(1);
                     }
                     let color = LCD::color_number(pixel_x as u8, top, bottom);
                     if color != 0x00
                         && !(behind
-                            && bgcolors[info.x.overflowing_add(x).0.overflowing_sub(8).0 as usize]
-                                > 0)
+                            && bgcolors[info.x.wrapping_add(x).wrapping_sub(8) as usize] > 0)
                     {
                         let pixel = obp.color(color);
-                        self.set_pixel(x as u8, ly, pixel);
+                        self.set_pixel(info.x.wrapping_add(x).wrapping_sub(8), ly, pixel);
                     }
                 }
             }
@@ -413,22 +412,22 @@ impl LCD {
         let (x, y, width) = (x as usize, y as usize, SCREEN_SIZE.0 as usize);
         // write in rgba, don't touch a
         for i in 0..3 {
+            if x + i >= width {
+                continue;
+            }
             self.screen[(y * width * 4) + (x * 4) + i] = pixel;
         }
     }
 
     fn get_sprites(mem: &Memory, ly: u8, size: SpriteSize) -> Vec<SpriteInfo> {
+        let size = if size == SpriteSize::Large { 0 } else { 8 };
         let mut sprites: Vec<SpriteInfo> = (0..40)
             .map(|i| SpriteInfo::from_memory(mem, i))
             .filter(|info| {
                 info.y == 0
                     || info.y >= SCREEN_SIZE.0
-                    || ly < info.y.overflowing_sub(16).0
-                    || ly
-                        >= info
-                            .y
-                            .overflowing_sub(if size == SpriteSize::Large { 0 } else { 8 })
-                            .0
+                    || ly < info.y.wrapping_sub(16)
+                    || ly >= info.y.wrapping_sub(size)
             })
             .collect();
         sprites.sort_by(|left, right| left.x.partial_cmp(&right.x).unwrap());

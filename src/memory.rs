@@ -145,7 +145,7 @@ impl Memory {
                             0x00 | 0x20 | 0x40 | 0x60 => value + 0x01,
                             _ => value,
                         };
-                        (self.rom_bank & 0xef) | (value & 0x1f)
+                        (self.rom_bank & 0xe0) | (value & 0x1f)
                     }
                     Controller::MBC2 => {
                         if address & 0x0100 == 0 {
