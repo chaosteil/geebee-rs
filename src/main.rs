@@ -1,6 +1,7 @@
 mod bytes;
 mod cart;
 mod cpu;
+mod joypad;
 mod lcd;
 mod memory;
 mod timer;

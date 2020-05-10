@@ -1,4 +1,5 @@
 use crate::bytes;
+use crate::joypad::Joypad;
 use crate::lcd::LCD;
 use crate::memory::Memory;
 use crate::timer;
@@ -6,11 +7,11 @@ use crate::timer;
 pub struct CPU {
     memory: Memory,
     lcd: LCD,
+    joypad: Joypad,
 
     regs: Registers,
     interrupts: Interrupts,
     timer: timer::Timer,
-    joypad: u8,
 
     serial: Vec<u8>,
     halt: bool,
@@ -27,11 +28,11 @@ impl CPU {
         Self {
             memory,
             lcd,
+            joypad: Joypad::new(),
             regs: Registers::new_boot(),
             interrupts: Interrupts::default(),
             timer: timer::Timer::new(),
             serial: Vec::new(),
-            joypad: 0x1f,
             halt: false,
             sp: 0xfffe,
             pc: if has_bootrom { 0 } else { 0x0100 },
@@ -66,6 +67,10 @@ impl CPU {
 
     pub fn lcd(&self) -> &LCD {
         &self.lcd
+    }
+
+    pub fn joypad(&mut self) -> &mut Joypad {
+        &mut self.joypad
     }
 
     #[allow(dead_code)]
@@ -111,7 +116,7 @@ impl CPU {
 
     fn read(&mut self, address: u16) -> u8 {
         match address {
-            0xff00 => self.joypad,
+            0xff00 => self.joypad.value(),
             0xff01 => self.sb,
             0xff02 => self.sc,
             0xff04 => self.timer.div(),
@@ -134,7 +139,7 @@ impl CPU {
 
     fn write(&mut self, address: u16, value: u8) {
         match address {
-            0xff00 => {} // self.joypad = value,
+            0xff00 => self.joypad.select(value),
             0xff01 => self.sb = value,
             0xff02 => {
                 self.serial.push(self.sb);
