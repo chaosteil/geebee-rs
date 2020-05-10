@@ -89,8 +89,8 @@ impl Memory {
                 self.cart.data()[address]
             }
             0x8000..=0x9fff => {
-                // let address = (0x2000 * self.video_bank as u16) + (address - 0x8000);
-                self.video[address as usize - 0x8000]
+                let address = (0x2000 * self.video_bank as u16) + (address - 0x8000);
+                self.video[address as usize]
             }
             0xa000..=0xbfff => {
                 if self.external_ram_enabled {
