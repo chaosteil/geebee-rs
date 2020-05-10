@@ -309,7 +309,7 @@ impl LCD {
         } else {
             0x9800
         };
-        if self.regs.lcdc.window_display_enable && self.regs.wx <= 166 && self.regs.wy <= 143 {
+        if self.regs.lcdc.window_display_enable && self.regs.wx <= 166 && self.regs.wy <= ly {
             let y = ly.wrapping_sub(self.regs.wy);
             let (mut bottom, mut top) = (0x00, 0x00);
             let mut last_tile_x: Option<u8> = None;
@@ -320,7 +320,7 @@ impl LCD {
 
                 if last_tile_x.is_none() || last_tile_x.unwrap() != tile_x {
                     let tile = mem.read(win_tile_map + (tile_y as u16 * 32) + tile_x as u16);
-                    let address = (0x8800u16 as i16)
+                    let address = (0x9000u16 as i16)
                         .wrapping_add(tile as i8 as i16 * 16)
                         .wrapping_add(pixel_y as i8 as i16 * 2)
                         as u16;

@@ -1,5 +1,5 @@
 pub struct Joypad {
-    selection: Selection,
+    selection: Option<Selection>,
     buttons: [bool; 8],
     flag: u8,
 }
@@ -23,7 +23,7 @@ enum Selection {
 impl Joypad {
     pub fn new() -> Self {
         Self {
-            selection: Selection::Direction,
+            selection: None,
             buttons: [false; 8],
             flag: 0xff,
         }
@@ -38,18 +38,18 @@ impl Joypad {
     }
 
     pub fn select(&mut self, flag: u8) {
-        if flag & 0x10 == 0 {
-            self.selection = Selection::Direction;
-        } else if flag & 0x20 == 0 {
-            self.selection = Selection::Buttons;
-        }
+        self.selection = match flag & 0x30 {
+            0x10 | 0x30 => Some(Selection::Buttons),
+            0x20 | 0x00 => Some(Selection::Direction),
+            _ => unreachable!(),
+        };
         self.flag = flag & 0xf0;
     }
 
     pub fn value(&self) -> u8 {
         (self.flag & 0xf0)
             | match self.selection {
-                Selection::Direction => {
+                Some(Selection::Direction) => {
                     (if !self.buttons[Button::Right as usize] {
                         0x01
                     } else {
@@ -68,7 +68,7 @@ impl Joypad {
                         0
                     })
                 }
-                Selection::Buttons => {
+                Some(Selection::Buttons) => {
                     (if !self.buttons[Button::A as usize] {
                         0x01
                     } else {
@@ -87,7 +87,7 @@ impl Joypad {
                         0
                     })
                 }
-                _ => 0x3f,
+                None => 0x0f,
             }
     }
 }
