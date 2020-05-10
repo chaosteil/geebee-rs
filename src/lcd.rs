@@ -320,20 +320,12 @@ impl LCD {
 
                 if last_tile_x.is_none() || last_tile_x.unwrap() != tile_x {
                     let tile = mem.read(win_tile_map + (tile_y as u16 * 32) + tile_x as u16);
-                    if !unsigned {
-                        let address = (bg_tile_data as i16)
-                            .wrapping_add(tile as i8 as i16 * 16)
-                            .wrapping_add(pixel_y as i8 as i16 * 2)
-                            as u16;
-                        bottom = mem.read(address);
-                        top = mem.read(address + 1);
-                    } else {
-                        let address = bg_tile_data
-                            .wrapping_add(tile as u16 * 16)
-                            .wrapping_add(pixel_y as u16 * 2);
-                        bottom = mem.read(address);
-                        top = mem.read(address + 1);
-                    }
+                    let address = (0x8800u16 as i16)
+                        .wrapping_add(tile as i8 as i16 * 16)
+                        .wrapping_add(pixel_y as i8 as i16 * 2)
+                        as u16;
+                    bottom = mem.read(address);
+                    top = mem.read(address + 1);
                     last_tile_x = Some(tile_x);
                 }
 
@@ -384,8 +376,7 @@ impl LCD {
                     }
                 }
 
-                let address = 0x8000u16
-                    .wrapping_add((sprite_tile as i8 as i16 as u16).wrapping_mul(16) as u16)
+                let address = 0x8000u16.wrapping_add((sprite_tile as u16).wrapping_mul(16) as u16)
                     + pixel_y as u16 * 2;
                 let bottom = mem.read(address);
                 let top = mem.read(address + 1);
@@ -424,10 +415,10 @@ impl LCD {
         let mut sprites: Vec<SpriteInfo> = (0..40)
             .map(|i| SpriteInfo::from_memory(mem, i))
             .filter(|info| {
-                info.y == 0
+                !(info.y == 0
                     || info.y >= SCREEN_SIZE.0
                     || ly < info.y.wrapping_sub(16)
-                    || ly >= info.y.wrapping_sub(size)
+                    || ly >= info.y.wrapping_sub(size))
             })
             .collect();
         sprites.sort_by(|left, right| left.x.partial_cmp(&right.x).unwrap());
