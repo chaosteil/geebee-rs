@@ -147,17 +147,14 @@ impl LCD {
 
     pub fn advance(&mut self, mem: &mut Memory, interrupts: &mut Interrupts, timing: Timing) {
         self.done_frame = false;
-        //Mode 0 is present between 201-207 clks, 2 about 77-83 clks, and 3
-        //about 169-175 clks. A complete cycle through these states takes 456
-        //clks. VBlank lasts 4560 clks. A complete screen refresh occurs every
-        //70224 clks.)
 
-        interrupts.flag &= 0xfc;
+        interrupts.flag &= !0x03;
         mem.set_oam_access(true);
         mem.set_vram_access(true);
 
         if !self.regs.lcdc.display_enable {
             if self.enabled {
+                self.regs.ly = 0;
                 self.set_mode(interrupts, Mode::HBlank);
                 self.mode_timing = 0;
                 self.enabled = false;
@@ -219,11 +216,9 @@ impl LCD {
         if self.regs.stat.coincidence && self.regs.stat.lyc_equals_lc {
             interrupts.flag |= 0x02;
         }
+
         mem.set_oam_access(true);
         mem.set_vram_access(true);
-        if !self.enabled {
-            return;
-        }
 
         match self.regs.stat.mode {
             Mode::OAM => {
@@ -282,7 +277,7 @@ impl LCD {
                     let tile = mem.read(bg_tile_map + (tile_y as u16 * 32) + tile_x as u16);
                     if !signed {
                         let address = (bg_tile_data as i16)
-                            .wrapping_add((tile as i8 as i16 + 128) * 16)
+                            .wrapping_add((tile as i8 as i16) * 16)
                             .wrapping_add(pixel_y as i8 as i16 * 2)
                             as u16;
                         bottom = mem.read(address);
@@ -325,10 +320,10 @@ impl LCD {
 
                 if last_tile_x.is_none() || last_tile_x.unwrap() != tile_x {
                     let tile = mem.read(win_tile_map + (tile_y as u16 * 32) + tile_x as u16);
-                    if !signed {
+                    if signed {
                         let address = (bg_tile_data as i16)
                             .wrapping_add(tile as i8 as i16 * 16)
-                            .wrapping_add(pixel_y as i16 * 2)
+                            .wrapping_add(pixel_y as i8 as i16 * 2)
                             as u16;
                         bottom = mem.read(address);
                         top = mem.read(address + 1);
@@ -348,6 +343,7 @@ impl LCD {
                 self.set_pixel(x as u8, ly, pixel);
             }
         }
+        return;
 
         // Sprites
         let sprites = LCD::get_sprites(&mem, ly, self.regs.lcdc.obj_size);
@@ -494,7 +490,7 @@ impl From<LCDC> for u8 {
 }
 
 impl STAT {
-    pub fn from(&mut self, f: u8) {
+    pub fn update(&mut self, f: u8) {
         self.lyc_equals_lc = f & 0x40 != 0;
         self.mode_2_oam = f & 0x20 != 0;
         self.mode_1_vblank = f & 0x10 != 0;

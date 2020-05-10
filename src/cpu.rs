@@ -31,7 +31,7 @@ impl CPU {
             interrupts: Interrupts::default(),
             timer: timer::Timer::new(),
             serial: Vec::new(),
-            joypad: 0,
+            joypad: 0x1f,
             halt: false,
             sp: 0xfffe,
             pc: if has_bootrom { 0 } else { 0x0100 },
@@ -104,6 +104,7 @@ impl CPU {
             self.op_push(self.pc);
             self.pc = 0x40 + i * 0x08;
             self.halt = false;
+            break;
         }
         Some(12)
     }
@@ -133,7 +134,7 @@ impl CPU {
 
     fn write(&mut self, address: u16, value: u8) {
         match address {
-            0xff00 => self.joypad = value,
+            0xff00 => {} // self.joypad = value,
             0xff01 => self.sb = value,
             0xff02 => {
                 self.serial.push(self.sb);
@@ -178,10 +179,10 @@ impl CPU {
         let mut regs = self.lcd.regs();
         match address {
             0xff40 => regs.lcdc = value.into(),
-            0xff41 => regs.stat.from(value),
+            0xff41 => regs.stat.update(value),
             0xff42 => regs.scy = value,
             0xff43 => regs.scx = value,
-            0xff44 => regs.ly = 0,
+            0xff44 => {}
             0xff45 => regs.lyc = value,
             0xff46 => {
                 let start = (value as u16) << 8;

@@ -89,6 +89,9 @@ impl Memory {
                 self.cart.data()[address]
             }
             0x8000..=0x9fff => {
+                if !self.vram_access {
+                    return 0x00;
+                }
                 let address = (0x2000 * self.video_bank as u16) + (address - 0x8000);
                 self.video[address as usize]
             }
@@ -104,7 +107,13 @@ impl Memory {
             0xd000..=0xdfff | 0xf000..=0xfdff => {
                 self.work_ram[(self.work_ram_bank as usize * 0x1000) | address as usize & 0x0fff]
             }
-            0xfe00..=0xfe9f => self.oam[address as usize - 0xfe00],
+            0xfe00..=0xfe9f => {
+                if self.oam_access {
+                    self.oam[address as usize - 0xfe00]
+                } else {
+                    0x00
+                }
+            }
             0xfea0..=0xfeff => 0,
             0xff70 => self.work_ram_bank,
             0xff00..=0xff7f => self.io[address as usize - 0xff00],
@@ -174,9 +183,10 @@ impl Memory {
                 _ => {}
             },
             0x8000..=0x9fff => {
-                // let address = (0x2000 * self.video_bank as u16) + (address - 0x8000);
-                // self.video[address as usize] = value;
-                self.video[address as usize - 0x8000] = value;
+                if self.vram_access {
+                    let address = (0x2000 * self.video_bank as u16) + (address - 0x8000);
+                    self.video[address as usize] = value;
+                }
             }
             0xa000..=0xbfff => {
                 if self.external_ram_enabled {
@@ -189,7 +199,11 @@ impl Memory {
                 self.work_ram
                     [(self.work_ram_bank as usize * 0x1000) | (address as usize & 0x0fff)] = value
             }
-            0xfe00..=0xfe9f => self.oam[address as usize - 0xfe00] = value,
+            0xfe00..=0xfe9f => {
+                if self.oam_access {
+                    self.oam[address as usize - 0xfe00] = value
+                }
+            }
             0xfea0..=0xfeff => {}
             0xff70 => {
                 self.work_ram_bank = match value & 0x07 {
