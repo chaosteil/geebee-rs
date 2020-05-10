@@ -51,6 +51,9 @@ impl CPU {
     }
 
     pub fn step(&mut self) {
+        if self.joypad.check_interrupts() {
+            self.interrupts.flag |= 0x10;
+        }
         let timing = if let Some(timing) = self.handle_interrupts() {
             timing
         } else if self.halt {

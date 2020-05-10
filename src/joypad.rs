@@ -2,8 +2,10 @@ pub struct Joypad {
     selection: Option<Selection>,
     buttons: [bool; 8],
     flag: u8,
+    interrupts: bool,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum Button {
     Up = 0,
     Down,
@@ -15,6 +17,7 @@ pub enum Button {
     Select,
 }
 
+#[derive(Debug, Clone, Copy)]
 enum Selection {
     Direction,
     Buttons,
@@ -26,11 +29,21 @@ impl Joypad {
             selection: None,
             buttons: [false; 8],
             flag: 0xff,
+            interrupts: false,
         }
     }
 
+    pub fn check_interrupts(&mut self) -> bool {
+        let i = self.interrupts;
+        self.interrupts = false;
+        i
+    }
+
     pub fn press(&mut self, button: Button) {
-        self.buttons[button as usize] = true;
+        if !self.buttons[button as usize] {
+            self.buttons[button as usize] = true;
+            self.interrupts = true;
+        }
     }
 
     pub fn release(&mut self, button: Button) {
@@ -39,11 +52,11 @@ impl Joypad {
 
     pub fn select(&mut self, flag: u8) {
         self.selection = match flag & 0x30 {
-            0x10 | 0x30 => Some(Selection::Buttons),
-            0x20 | 0x00 => Some(Selection::Direction),
-            _ => unreachable!(),
+            0x10 => Some(Selection::Buttons),
+            0x20 => Some(Selection::Direction),
+            _ => None,
         };
-        self.flag = flag & 0xf0;
+        self.flag = (self.flag & 0xcf) | (flag & 0x30);
     }
 
     pub fn value(&self) -> u8 {
@@ -87,7 +100,7 @@ impl Joypad {
                         0
                     })
                 }
-                None => 0x0f,
+                None => self.flag & 0x0f,
             }
     }
 }

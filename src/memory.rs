@@ -114,11 +114,11 @@ impl Memory {
                     0x00
                 }
             }
-            0xfea0..=0xfeff => 0,
+            0xfea0..=0xfeff => 0xff,
             0xff70 => self.work_ram_bank,
             0xff00..=0xff7f => self.io[address as usize - 0xff00],
             0xff80..=0xfffe => self.high_ram[address as usize - 0xff80],
-            0xffff => 0,
+            0xffff => unreachable!(),
         }
     }
 

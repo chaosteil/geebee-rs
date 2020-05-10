@@ -148,7 +148,6 @@ impl LCD {
     pub fn advance(&mut self, mem: &mut Memory, interrupts: &mut Interrupts, timing: Timing) {
         self.done_frame = false;
 
-        interrupts.flag &= !0x03;
         mem.set_oam_access(true);
         mem.set_vram_access(true);
 
@@ -361,7 +360,7 @@ impl LCD {
                         sprite_tile = info.tile & 0xfe;
                     } else {
                         sprite_tile = info.tile | 0x01;
-                        pixel_y -= 8;
+                        pixel_y = pixel_y.wrapping_sub(8);
                     }
                 }
 
