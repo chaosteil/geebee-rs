@@ -43,7 +43,12 @@ impl Cartridge {
         };
         self.sgb = data[0x0146] == 0x03;
         self.data = data.to_vec();
-        println!("Cart Data: {}, {:?}", self.title(), self.cart_type());
+        println!(
+            "Cart Data: {}, {:?} CGB: {}",
+            self.title(),
+            self.cart_type(),
+            self.cgb
+        );
         Ok(self)
     }
 
@@ -105,6 +110,10 @@ impl From<u8> for CartType {
                 ..Default::default()
             },
             0x01 => CartType {
+                controller: Controller::MBC1,
+                ..Default::default()
+            },
+            0x02 => CartType {
                 controller: Controller::MBC1,
                 ram: true,
                 ..Default::default()
