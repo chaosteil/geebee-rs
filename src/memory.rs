@@ -72,8 +72,7 @@ impl Memory {
                     self.bootrom[address as usize]
                 }
             }
-            0x0100..=0x7fff => self.mbc.read(address),
-            0xa000..=0xbfff => self.mbc.read(address),
+            0x0100..=0xbfff => self.mbc.read(address),
             0xc000..=0xcfff | 0xe000..=0xefff => self.work_ram[address as usize & 0x0fff],
             0xd000..=0xdfff | 0xf000..=0xfdff => {
                 self.work_ram[(self.work_ram_bank as usize * 0x1000) | address as usize & 0x0fff]
@@ -88,17 +87,13 @@ impl Memory {
             }
             0xff00..=0xff7f => self.io[address as usize - 0xff00],
             0xff80..=0xfffe => self.high_ram[address as usize - 0xff80],
-            _ => panic!("should have been handled earlier"),
+            _ => panic!("should have been handled earlier {:04x}", address),
         }
     }
 
     pub fn write(&mut self, address: u16, value: u8) {
         match address {
-            0x0000..=0x1fff => self.mbc.write(address, value),
-            0x2000..=0x3fff => self.mbc.write(address, value),
-            0x4000..=0x5fff => self.mbc.write(address, value),
-            0x6000..=0x7fff => self.mbc.write(address, value),
-            0xa000..=0xbfff => self.mbc.write(address, value),
+            0x0000..=0xbfff => self.mbc.write(address, value),
             0xc000..=0xcfff | 0xe000..=0xefff => self.work_ram[address as usize & 0x0fff] = value,
             0xd000..=0xdfff | 0xf000..=0xfdff => {
                 self.work_ram
@@ -115,7 +110,10 @@ impl Memory {
             }
             0xff00..=0xff6f | 0xff71..=0xff7f => self.io[address as usize - 0xff00] = value,
             0xff80..=0xfffe => self.high_ram[address as usize - 0xff80] = value,
-            _ => panic!("should have been handled earlier {:04x}", address),
+            _ => panic!(
+                "should have been handled earlier {:04x} {:02x}",
+                address, value
+            ),
         }
     }
 
