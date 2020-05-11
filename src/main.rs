@@ -33,11 +33,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_matches();
 
     let cart = cart::Cartridge::new().with_path(Path::new(matches.value_of("rom").unwrap()))?;
+
     let mut memory = memory::Memory::new().with_cartridge(cart);
     if let Some(bootrom) = matches.value_of("bootrom") {
         memory = memory.with_bootrom_path(Path::new(bootrom))?;
     }
-    let lcd = lcd::LCD::new();
+
+    let lcd = lcd::LCD::new(memory.cgb_mode());
     let cpu = cpu::CPU::new(memory, lcd);
 
     ui::launch(cpu)?;

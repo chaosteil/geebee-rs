@@ -7,9 +7,17 @@ pub const SCREEN_SIZE: (u8, u8) = (160, 144);
 pub struct LCD {
     regs: Registers,
     done_frame: bool,
+    cgb: bool,
 
     enabled: bool,
     mode_timing: u16,
+
+    vram_access: bool,
+    video: [u8; 0x4000],
+    video_bank: u8,
+
+    oam_access: bool,
+    oam: [u8; 0xa0],
 
     screen: Vec<u8>,
 }
@@ -29,22 +37,29 @@ impl Default for Mode {
 }
 
 #[derive(Default, Clone)]
-pub struct Registers {
-    pub lcdc: LCDC,
-    pub stat: STAT,
-    pub scy: u8,
-    pub scx: u8,
-    pub ly: u8,
-    pub lyc: u8,
-    pub wy: u8,
-    pub wx: u8,
-    pub bgp: MonoPalette,
-    pub obp0: MonoPalette,
-    pub obp1: MonoPalette,
+struct Registers {
+    lcdc: LCDC,
+    stat: STAT,
+    scy: u8,
+    scx: u8,
+    ly: u8,
+    lyc: u8,
+    wy: u8,
+    wx: u8,
+    bgp: MonoPalette,
+    obp0: MonoPalette,
+    obp1: MonoPalette,
+    bgpi: u8,
+    bgpd: Vec<u8>,
+    obpi: u8,
+    obpd: Vec<u8>,
+    dma_source: u16,
+    dma_dest: u16,
+    hdma_transfer: u8,
 }
 
 #[derive(Default, Clone)]
-pub struct LCDC {
+struct LCDC {
     display_enable: bool,
     window_tile_map_display_select: bool,
     window_display_enable: bool,
@@ -68,7 +83,7 @@ impl Default for SpriteSize {
 }
 
 #[derive(Default, Clone)]
-pub struct STAT {
+struct STAT {
     lyc_equals_lc: bool,
     mode_2_oam: bool,
     mode_1_vblank: bool,
@@ -78,7 +93,7 @@ pub struct STAT {
 }
 
 #[derive(Default, Copy, Clone)]
-pub struct MonoPalette {
+struct MonoPalette {
     color3: GrayShades,
     color2: GrayShades,
     color1: GrayShades,
@@ -107,34 +122,36 @@ struct SpriteInfo {
 }
 
 impl SpriteInfo {
-    fn from_memory(mem: &Memory, id: u8) -> Self {
+    fn from_memory(lcd: &LCD, id: u8) -> Self {
         let id = id as u16;
         Self {
-            y: mem.read(0xfe00 + id * 4),
-            x: mem.read(0xfe00 + id * 4 + 1),
-            tile: mem.read(0xfe00 + id * 4 + 2),
-            flags: mem.read(0xfe00 + id * 4 + 3),
+            y: lcd.handle_read(0xfe00 + id * 4),
+            x: lcd.handle_read(0xfe00 + id * 4 + 1),
+            tile: lcd.handle_read(0xfe00 + id * 4 + 2),
+            flags: lcd.handle_read(0xfe00 + id * 4 + 3),
         }
     }
 }
 
 impl LCD {
-    pub fn new() -> Self {
+    pub fn new(cgb: bool) -> Self {
         Self {
-            regs: Registers::default(),
+            regs: Registers {
+                bgpd: vec![0; 0x40],
+                obpd: vec![0; 0x40],
+                ..Default::default()
+            },
             done_frame: true,
+            cgb,
             enabled: false,
             mode_timing: 0,
+            vram_access: true,
+            video: [0; 0x4000],
+            video_bank: 0,
+            oam_access: true,
+            oam: [0; 0xa0],
             screen: vec![0xff; 4 * SCREEN_SIZE.0 as usize * SCREEN_SIZE.1 as usize],
         }
-    }
-
-    pub fn regs(&self) -> Registers {
-        self.regs.clone()
-    }
-
-    pub fn set_regs(&mut self, regs: Registers) {
-        self.regs = regs;
     }
 
     pub fn screen(&self) -> &[u8] {
@@ -145,11 +162,126 @@ impl LCD {
         self.done_frame
     }
 
-    pub fn advance(&mut self, mem: &mut Memory, interrupts: &mut Interrupts, timing: Timing) {
+    pub fn handle_read(&self, address: u16) -> u8 {
+        match address {
+            0x8000..=0x9fff => {
+                if self.vram_access {
+                    let address = (0x2000 * self.video_bank as u16) + (address - 0x8000);
+                    self.video[address as usize]
+                } else {
+                    0x00
+                }
+            }
+            0xfe00..=0xfe9f => {
+                if self.oam_access {
+                    self.oam[address as usize - 0xfe00]
+                } else {
+                    0x00
+                }
+            }
+            0xff40 => self.regs.lcdc.clone().into(),
+            0xff41 => self.regs.stat.clone().into(),
+            0xff42 => self.regs.scy,
+            0xff43 => self.regs.scx,
+            0xff44 => self.regs.ly,
+            0xff45 => self.regs.lyc,
+            0xff46 => 0xff,
+            0xff47 => self.regs.bgp.into(),
+            0xff48 => self.regs.obp0.into(),
+            0xff49 => self.regs.obp1.into(),
+            0xff4a => self.regs.wy,
+            0xff4b => self.regs.wx,
+            0xff4f => self.video_bank,
+            0xff51 => ((self.regs.dma_source & 0xf0) >> 8) as u8,
+            0xff52 => (self.regs.dma_source & 0x0f) as u8,
+            0xff53 => ((self.regs.dma_dest & 0xf0) >> 8) as u8,
+            0xff54 => (self.regs.dma_dest & 0x0f) as u8,
+            0xff55 => self.regs.hdma_transfer,
+            0xff68 => self.regs.bgpi,
+            0xff69 => self.regs.bgpd[self.regs.bgpi as usize],
+            0xff6a => self.regs.obpi,
+            0xff6b => self.regs.obpd[self.regs.obpi as usize],
+            _ => unreachable!(),
+        }
+    }
+
+    pub fn handle_write(&mut self, mem: &mut Memory, address: u16, value: u8) {
+        match address {
+            0x8000..=0x9fff => {
+                if self.vram_access {
+                    let address = (0x2000 * self.video_bank as u16) + (address - 0x8000);
+                    self.video[address as usize] = value;
+                }
+            }
+            0xfe00..=0xfe9f => {
+                if self.oam_access {
+                    self.oam[address as usize - 0xfe00] = value
+                }
+            }
+            0xff40 => self.regs.lcdc = value.into(),
+            0xff41 => self.regs.stat.update(value),
+            0xff42 => self.regs.scy = value,
+            0xff43 => self.regs.scx = value,
+            0xff44 => {}
+            0xff45 => self.regs.lyc = value,
+            0xff46 => {
+                let start = (value as u16) << 8;
+                let end = ((value as u16) << 8) | 0x009f;
+                for dest in start..=end {
+                    let v = mem.read(dest);
+                    self.handle_write(mem, 0xfe00 | (dest & 0xff) as u16, v);
+                }
+            }
+            0xff47 => self.regs.bgp = value.into(),
+            0xff48 => self.regs.obp0 = value.into(),
+            0xff49 => self.regs.obp1 = value.into(),
+            0xff4a => self.regs.wy = value,
+            0xff4b => self.regs.wx = value,
+            0xff4f => self.video_bank = value & 0x01,
+            0xff51 => self.regs.dma_source = ((value as u16) << 8) | (self.regs.dma_source & 0x0f),
+            0xff52 => self.regs.dma_source = (value as u16) | (self.regs.dma_source & 0xf0),
+            0xff53 => self.regs.dma_dest = ((value as u16) << 8) | (self.regs.dma_dest & 0x0f),
+            0xff54 => self.regs.dma_dest = (value as u16) | (self.regs.dma_dest & 0xf0),
+            0xff55 => self.start_hdma_transfer(mem, value),
+            0xff68 => self.regs.bgpi = value & 0x3f,
+            0xff69 => {
+                self.regs.bgpd[self.regs.bgpi as usize] = value;
+                if self.regs.bgpi & 0x80 != 0 {
+                    self.regs.bgpi = self.regs.bgpi.wrapping_add(1);
+                }
+            }
+            0xff6a => self.regs.obpi = value & 0x3f,
+            0xff6b => {
+                self.regs.obpd[self.regs.obpi as usize] = value;
+                if self.regs.obpi & 0x80 != 0 {
+                    self.regs.obpi = self.regs.obpi.wrapping_add(1);
+                }
+            }
+            _ => panic!("unreachable with {:04x}", address),
+        }
+    }
+
+    fn start_hdma_transfer(&mut self, mem: &mut Memory, value: u8) {
+        let length = (value & 0x7f) as u16 * 0x10;
+        if value & 0x80 == 0 {
+            let start = self.regs.dma_source & 0xfff0;
+            let end = (self.regs.dma_dest & 0x1ff0) | 0x8000;
+            for i in 0..length {
+                let v = mem.read(start + i);
+                self.handle_write(mem, end + i, v);
+            }
+            self.regs.hdma_transfer = 0xff;
+        } else {
+            // TODO: Hblank transfer
+            println!("hblank :(")
+        }
+    }
+
+    pub fn advance(&mut self, interrupts: &mut Interrupts, timing: Timing) {
         self.done_frame = false;
 
-        mem.set_oam_access(true);
-        mem.set_vram_access(true);
+        self.oam_access = true;
+        self.vram_access = true;
 
         if !self.regs.lcdc.display_enable {
             if self.enabled {
@@ -180,7 +312,7 @@ impl LCD {
                 if self.mode_timing >= 172 {
                     self.mode_timing -= 172;
                     self.set_mode(interrupts, Mode::HBlank);
-                    self.draw_line(mem, self.regs.ly);
+                    self.draw_line(self.regs.ly);
                 }
             }
             Mode::HBlank => {
@@ -217,18 +349,19 @@ impl LCD {
             interrupts.flag |= 0x02;
         }
 
-        mem.set_oam_access(true);
-        mem.set_vram_access(true);
-
         match self.regs.stat.mode {
             Mode::OAM => {
-                mem.set_oam_access(false);
+                self.oam_access = false;
+                self.vram_access = true;
             }
             Mode::VRAM => {
-                mem.set_oam_access(false);
-                mem.set_vram_access(false);
+                self.oam_access = false;
+                self.vram_access = false;
             }
-            _ => {}
+            _ => {
+                self.oam_access = true;
+                self.vram_access = true;
+            }
         }
     }
 
@@ -248,7 +381,7 @@ impl LCD {
         }
     }
 
-    fn draw_line(&mut self, mem: &Memory, ly: u8) {
+    fn draw_line(&mut self, ly: u8) {
         if ly >= SCREEN_SIZE.1 {
             return;
         }
@@ -273,20 +406,20 @@ impl LCD {
                 let (pixel_x, pixel_y) = (8 - (x % 8) - 1, y % 8);
 
                 if last_tile_x.is_none() || last_tile_x.unwrap() != tile_x {
-                    let tile = mem.read(bg_tile_map + (tile_y as u16 * 32) + tile_x as u16);
+                    let tile = self.handle_read(bg_tile_map + (tile_y as u16 * 32) + tile_x as u16);
                     if !unsigned {
                         let address = (bg_tile_data as i16)
                             .wrapping_add(tile as i8 as i16 * 16)
                             .wrapping_add(pixel_y as i8 as i16 * 2)
                             as u16;
-                        bottom = mem.read(address);
-                        top = mem.read(address + 1);
+                        bottom = self.handle_read(address);
+                        top = self.handle_read(address + 1);
                     } else {
                         let address = bg_tile_data
                             .wrapping_add(tile as u16 * 16)
                             .wrapping_add(pixel_y as u16 * 2);
-                        bottom = mem.read(address);
-                        top = mem.read(address + 1);
+                        bottom = self.handle_read(address);
+                        top = self.handle_read(address + 1);
                     }
                     last_tile_x = Some(tile_x);
                 }
@@ -318,13 +451,14 @@ impl LCD {
                 let (pixel_x, pixel_y) = (8 - (x % 8) - 1, y % 8);
 
                 if last_tile_x.is_none() || last_tile_x.unwrap() != tile_x {
-                    let tile = mem.read(win_tile_map + (tile_y as u16 * 32) + tile_x as u16);
+                    let tile =
+                        self.handle_read(win_tile_map + (tile_y as u16 * 32) + tile_x as u16);
                     let address = (0x9000u16 as i16)
                         .wrapping_add(tile as i8 as i16 * 16)
                         .wrapping_add(pixel_y as i8 as i16 * 2)
                         as u16;
-                    bottom = mem.read(address);
-                    top = mem.read(address + 1);
+                    bottom = self.handle_read(address);
+                    top = self.handle_read(address + 1);
                     last_tile_x = Some(tile_x);
                 }
 
@@ -336,7 +470,7 @@ impl LCD {
         }
 
         // Sprites
-        let sprites = LCD::get_sprites(&mem, ly, self.regs.lcdc.obj_size);
+        let sprites = self.get_sprites(ly, self.regs.lcdc.obj_size);
         let count = match self.regs.lcdc.obj_size {
             SpriteSize::Large => 2,
             SpriteSize::Small => 1,
@@ -377,8 +511,8 @@ impl LCD {
 
                 let address = 0x8000u16.wrapping_add((sprite_tile as u16).wrapping_mul(16) as u16)
                     + pixel_y as u16 * 2;
-                let bottom = mem.read(address);
-                let top = mem.read(address + 1);
+                let bottom = self.handle_read(address);
+                let top = self.handle_read(address + 1);
                 for x in (0..8).filter(|&x| info.x.wrapping_add(x).wrapping_sub(8) < SCREEN_SIZE.0)
                 {
                     let mut pixel_x = 8u8.wrapping_sub(x % 8).wrapping_sub(1);
@@ -409,10 +543,10 @@ impl LCD {
         }
     }
 
-    fn get_sprites(mem: &Memory, ly: u8, size: SpriteSize) -> Vec<SpriteInfo> {
+    fn get_sprites(&mut self, ly: u8, size: SpriteSize) -> Vec<SpriteInfo> {
         let size = if size == SpriteSize::Large { 0 } else { 8 };
         let mut sprites: Vec<SpriteInfo> = (0..40)
-            .map(|i| SpriteInfo::from_memory(mem, i))
+            .map(|i| SpriteInfo::from_memory(self, i))
             .filter(|info| {
                 !(info.y == 0
                     || info.y >= SCREEN_SIZE.0

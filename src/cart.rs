@@ -69,6 +69,10 @@ impl Cartridge {
         &self.data
     }
 
+    pub fn cgb(&self) -> bool {
+        self.cgb
+    }
+
     pub fn ram_size(&self) -> u8 {
         self.ram_size
     }

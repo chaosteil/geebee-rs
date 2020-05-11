@@ -64,8 +64,7 @@ impl CPU {
         if self.timer.advance(timing) {
             self.interrupts.flag |= 0x04;
         }
-        self.lcd
-            .advance(&mut self.memory, &mut self.interrupts, timing);
+        self.lcd.advance(&mut self.interrupts, timing);
     }
 
     pub fn lcd(&self) -> &LCD {
@@ -127,7 +126,12 @@ impl CPU {
             0xff06 => self.timer.tma(),
             0xff07 => self.timer.tac(),
             0xff0f => self.interrupts.flag,
-            0xff40..=0xff4b => self.handle_lcd_read(address),
+            0x8000..=0x9fff
+            | 0xfe00..=0xfe9f
+            | 0xff40..=0xff4b
+            | 0xff4f
+            | 0xff51..=0xff55
+            | 0xff68..=0xff6b => self.lcd.handle_read(address),
             0xff50 => 0,
             0xffff => self.interrupts.enable,
             _ => self.memory.read(address),
@@ -153,7 +157,12 @@ impl CPU {
             0xff06 => self.timer.set_tma(value),
             0xff07 => self.timer.set_tac(value),
             0xff0f => self.interrupts.flag = value & 0x1f,
-            0xff40..=0xff4b => self.handle_lcd_write(address, value),
+            0x8000..=0x9fff
+            | 0xfe00..=0xfe9f
+            | 0xff40..=0xff4b
+            | 0xff4f
+            | 0xff51..=0xff55
+            | 0xff68..=0xff6b => self.lcd.handle_write(&mut self.memory, address, value),
             0xff50 => {
                 if value != 0 {
                     self.memory.disable_booting()
@@ -162,52 +171,6 @@ impl CPU {
             0xffff => self.interrupts.enable = value & 0x1f,
             _ => self.memory.write(address, value),
         }
-    }
-
-    fn handle_lcd_read(&mut self, address: u16) -> u8 {
-        let regs = self.lcd.regs();
-        match address {
-            0xff40 => regs.lcdc.into(),
-            0xff41 => regs.stat.into(),
-            0xff42 => regs.scy,
-            0xff43 => regs.scx,
-            0xff44 => regs.ly,
-            0xff45 => regs.lyc,
-            0xff46 => 0xff,
-            0xff47 => regs.bgp.into(),
-            0xff48 => regs.obp0.into(),
-            0xff49 => regs.obp1.into(),
-            0xff4a => regs.wy,
-            0xff4b => regs.wx,
-            _ => unreachable!(),
-        }
-    }
-
-    fn handle_lcd_write(&mut self, address: u16, value: u8) {
-        let mut regs = self.lcd.regs();
-        match address {
-            0xff40 => regs.lcdc = value.into(),
-            0xff41 => regs.stat.update(value),
-            0xff42 => regs.scy = value,
-            0xff43 => regs.scx = value,
-            0xff44 => {}
-            0xff45 => regs.lyc = value,
-            0xff46 => {
-                let start = (value as u16) << 8;
-                let end = ((value as u16) << 8) | 0x009f;
-                for dest in start..=end {
-                    let v = self.read(dest);
-                    self.write(0xfe00 | (dest & 0xff) as u16, v);
-                }
-            }
-            0xff47 => regs.bgp = value.into(),
-            0xff48 => regs.obp0 = value.into(),
-            0xff49 => regs.obp1 = value.into(),
-            0xff4a => regs.wy = value,
-            0xff4b => regs.wx = value,
-            _ => unreachable!(),
-        }
-        self.lcd.set_regs(regs);
     }
 }
 
