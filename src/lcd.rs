@@ -404,11 +404,11 @@ impl LCD {
 
         // BG
         let unsigned = self.regs.lcdc.bg_window_tile_data_select;
-        let bg_tile_data: u16 = if unsigned { 0x8000 } else { 0x9000 };
+        let bg_tile_data: u16 = if unsigned { 0x0000 } else { 0x1000 };
         let bg_tile_map = if self.regs.lcdc.bg_tile_map_display_select {
-            0x9c00
+            0x1c00
         } else {
-            0x9800
+            0x1800
         };
         let mut bgcolors = vec![0; SCREEN_SIZE.0 as usize];
         if self.regs.lcdc.bg_display {
@@ -422,21 +422,20 @@ impl LCD {
                 let (pixel_x, pixel_y) = (8 - (x % 8) - 1, y % 8);
 
                 if last_tile_x.is_none() || last_tile_x.unwrap() != tile_x {
-                    let tile = self.video
-                        [(bg_tile_map + (tile_y as u16 * 32) + tile_x as u16 - 0x8000) as usize];
+                    let tile =
+                        self.video[(bg_tile_map + (tile_y as u16 * 32) + tile_x as u16) as usize];
                     if !unsigned {
-                        let address = ((bg_tile_data as i16)
+                        let address = (bg_tile_data as i16)
                             .wrapping_add(tile as i8 as i16 * 16)
                             .wrapping_add(pixel_y as i8 as i16 * 2)
-                            as u16
-                            - 0x8000) as usize;
+                            as u16 as usize;
                         bottom = self.video[address];
                         top = self.video[address + 1];
                     } else {
-                        let address = (bg_tile_data
+                        let address = bg_tile_data
                             .wrapping_add(tile as u16 * 16)
                             .wrapping_add(pixel_y as u16 * 2)
-                            - 0x8000) as usize;
+                            as usize;
                         bottom = self.video[address];
                         top = self.video[address + 1];
                     }
@@ -446,7 +445,7 @@ impl LCD {
                 let color = LCD::color_number(pixel_x as u8, top, bottom);
                 bgcolors[i as usize] = color;
                 let pixel = self.regs.bgp.color(color);
-                self.set_pixel(i, ly, (pixel, pixel, pixel));
+                self.set_pixel(i, ly, pixel);
             }
         } else {
             for i in 0..SCREEN_SIZE.0 {
@@ -456,9 +455,9 @@ impl LCD {
 
         // Window
         let win_tile_map = if self.regs.lcdc.window_tile_map_display_select {
-            0x9c00
+            0x1c00
         } else {
-            0x9800
+            0x1800
         };
         if self.regs.lcdc.window_display_enable && self.regs.wx <= 166 && self.regs.wy <= ly {
             let y = ly.wrapping_sub(self.regs.wy);
@@ -470,13 +469,12 @@ impl LCD {
                 let (pixel_x, pixel_y) = (8 - (x % 8) - 1, y % 8);
 
                 if last_tile_x.is_none() || last_tile_x.unwrap() != tile_x {
-                    let tile = self.video
-                        [(win_tile_map + (tile_y as u16 * 32) + tile_x as u16 - 0x8000) as usize];
-                    let address = ((0x9000u16 as i16)
+                    let tile =
+                        self.video[(win_tile_map + (tile_y as u16 * 32) + tile_x as u16) as usize];
+                    let address = (0x1000u16 as i16)
                         .wrapping_add(tile as i8 as i16 * 16)
                         .wrapping_add(pixel_y as i8 as i16 * 2)
-                        as u16
-                        - 0x8000) as usize;
+                        as u16 as usize;
                     bottom = self.video[address];
                     top = self.video[address + 1];
                     last_tile_x = Some(tile_x);
@@ -485,7 +483,7 @@ impl LCD {
                 let color = LCD::color_number(pixel_x as u8, top, bottom);
                 bgcolors[i as usize] = color;
                 let pixel = self.regs.bgp.color(color);
-                self.set_pixel(i, ly, (pixel, pixel, pixel));
+                self.set_pixel(i, ly, pixel);
             }
         }
 
@@ -545,11 +543,7 @@ impl LCD {
                             && bgcolors[info.x.wrapping_add(x).wrapping_sub(8) as usize] > 0)
                     {
                         let pixel = obp.color(color);
-                        self.set_pixel(
-                            info.x.wrapping_add(x).wrapping_sub(8),
-                            ly,
-                            (pixel, pixel, pixel),
-                        );
+                        self.set_pixel(info.x.wrapping_add(x).wrapping_sub(8), ly, pixel);
                     }
                 }
             }
@@ -664,7 +658,7 @@ impl From<STAT> for u8 {
 }
 
 impl MonoPalette {
-    fn color(self, color: u8) -> u8 {
+    fn color(self, color: u8) -> (u8, u8, u8) {
         let color = match color & 0x03 {
             0x00 => ToPrimitive::to_u8(&self.color0).unwrap(),
             0x01 => ToPrimitive::to_u8(&self.color1).unwrap(),
@@ -673,10 +667,10 @@ impl MonoPalette {
             _ => unreachable!(),
         };
         match color & 0x03 {
-            0x00 => 255,
-            0x01 => 170,
-            0x02 => 85,
-            0x03 => 0,
+            0x00 => (255, 255, 255),
+            0x01 => (170, 170, 170),
+            0x02 => (85, 85, 85),
+            0x03 => (0, 0, 0),
             _ => unreachable!(),
         }
     }
