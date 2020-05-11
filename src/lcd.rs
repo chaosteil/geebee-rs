@@ -204,6 +204,7 @@ impl LCD {
                     self.set_mode(interrupts, Mode::OAM);
                     self.mode_timing -= 4560;
                     self.regs.ly = 0;
+                    self.done_frame = true;
                 } else {
                     let ly = (self.mode_timing / 456) + SCREEN_SIZE.1 as u16;
                     self.regs.ly = ly as u8;
@@ -244,7 +245,6 @@ impl LCD {
         }
         if mode == Mode::VBlank {
             interrupts.flag |= 0x01;
-            self.done_frame = true;
         }
     }
 

@@ -152,14 +152,14 @@ impl CPU {
             0xff05 => self.timer.set_tima(value),
             0xff06 => self.timer.set_tma(value),
             0xff07 => self.timer.set_tac(value),
-            0xff0f => self.interrupts.flag = value,
+            0xff0f => self.interrupts.flag = value & 0x1f,
             0xff40..=0xff4b => self.handle_lcd_write(address, value),
             0xff50 => {
                 if value != 0 {
                     self.memory.disable_booting()
                 }
             }
-            0xffff => self.interrupts.enable = value,
+            0xffff => self.interrupts.enable = value & 0x1f,
             _ => self.memory.write(address, value),
         }
     }
@@ -220,7 +220,7 @@ pub struct Interrupts {
 impl Default for Interrupts {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             enable: 0,
             flag: 0,
         }

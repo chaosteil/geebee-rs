@@ -42,7 +42,19 @@ impl Joypad {
     pub fn press(&mut self, button: Button) {
         if !self.buttons[button as usize] {
             self.buttons[button as usize] = true;
-            self.interrupts = true;
+            match self.selection {
+                Some(Selection::Direction) => {
+                    if button as usize <= 3 {
+                        self.interrupts = true;
+                    }
+                }
+                Some(Selection::Buttons) => {
+                    if button as usize > 3 {
+                        self.interrupts = true;
+                    }
+                }
+                None => {}
+            }
         }
     }
 

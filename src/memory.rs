@@ -158,7 +158,7 @@ impl Memory {
                             }
                         }
                     }
-                    _ => value,
+                    _ => self.rom_bank,
                 }
             }
             0x4000..=0x5fff => match self.cart.cart_type().controller {
