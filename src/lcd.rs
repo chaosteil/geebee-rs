@@ -1,3 +1,4 @@
+use crate::bytes;
 use crate::{cpu::Interrupts, memory::Memory, timer::Timing};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -92,28 +93,6 @@ struct STAT {
     mode: Mode,
 }
 
-#[derive(Default, Copy, Clone)]
-struct MonoPalette {
-    color3: GrayShades,
-    color2: GrayShades,
-    color1: GrayShades,
-    color0: GrayShades,
-}
-
-#[derive(FromPrimitive, ToPrimitive, Copy, Clone)]
-enum GrayShades {
-    White = 0x00,
-    LightGray = 0x01,
-    DarkGray = 0x02,
-    Black = 0x03,
-}
-
-impl Default for GrayShades {
-    fn default() -> Self {
-        Self::White
-    }
-}
-
 struct SpriteInfo {
     x: u8,
     y: u8,
@@ -129,22 +108,6 @@ impl SpriteInfo {
             x: lcd.handle_read(0xfe00 + id * 4 + 1),
             tile: lcd.handle_read(0xfe00 + id * 4 + 2),
             flags: lcd.handle_read(0xfe00 + id * 4 + 3),
-        }
-    }
-}
-
-struct ColorPalette {
-    r: u8,
-    g: u8,
-    b: u8,
-}
-
-impl ColorPalette {
-    fn from_u16(data: u16) -> Self {
-        Self {
-            r: (data & 0x001f) as u8,
-            g: ((data & 0x03e0) >> 5) as u8,
-            b: ((data & 0x7c00) >> 10) as u8,
         }
     }
 }
@@ -449,7 +412,7 @@ impl LCD {
             }
         } else {
             for i in 0..SCREEN_SIZE.0 {
-                self.set_pixel(i, ly as u8, (0xff, 0xff, 0xff));
+                self.set_pixel(i, ly as u8, Color(0xff, 0xff, 0xff));
             }
         }
 
@@ -550,7 +513,7 @@ impl LCD {
         }
     }
 
-    fn set_pixel(&mut self, x: u8, y: u8, rgb: (u8, u8, u8)) {
+    fn set_pixel(&mut self, x: u8, y: u8, rgb: Color) {
         let (x, y, width) = (x as usize, y as usize, SCREEN_SIZE.0 as usize);
         if x < width {
             self.screen[(y * width * 4) + (x * 4)] = rgb.0;
@@ -581,6 +544,18 @@ impl LCD {
 
     fn color_number(bit: u8, top: u8, bottom: u8) -> u8 {
         (((top >> bit) & 1) << 1) | (bottom >> bit) & 1
+    }
+
+    fn read_palette(&self, pd: Vec<u8>, index: u8) -> ColorPalette {
+        let index = (index & 0x3f) as usize;
+
+        let mut colors = [0; 4];
+        for i in 0..4 {
+            let low = pd[index + i];
+            let high = pd[index + i + 1];
+            colors[i] = bytes::assemble(high, low);
+        }
+        ColorPalette::from_u16(colors[0], colors[1], colors[2], colors[3])
     }
 }
 
@@ -657,8 +632,34 @@ impl From<STAT> for u8 {
     }
 }
 
-impl MonoPalette {
-    fn color(self, color: u8) -> (u8, u8, u8) {
+trait Palette {
+    fn color(self, color: u8) -> Color;
+}
+
+#[derive(Default, Copy, Clone)]
+struct MonoPalette {
+    color3: GrayShades,
+    color2: GrayShades,
+    color1: GrayShades,
+    color0: GrayShades,
+}
+
+#[derive(FromPrimitive, ToPrimitive, Copy, Clone)]
+enum GrayShades {
+    White = 0x00,
+    LightGray = 0x01,
+    DarkGray = 0x02,
+    Black = 0x03,
+}
+
+impl Default for GrayShades {
+    fn default() -> Self {
+        Self::White
+    }
+}
+
+impl Palette for MonoPalette {
+    fn color(self, color: u8) -> Color {
         let color = match color & 0x03 {
             0x00 => ToPrimitive::to_u8(&self.color0).unwrap(),
             0x01 => ToPrimitive::to_u8(&self.color1).unwrap(),
@@ -667,10 +668,10 @@ impl MonoPalette {
             _ => unreachable!(),
         };
         match color & 0x03 {
-            0x00 => (255, 255, 255),
-            0x01 => (170, 170, 170),
-            0x02 => (85, 85, 85),
-            0x03 => (0, 0, 0),
+            0x00 => Color(255, 255, 255),
+            0x01 => Color(170, 170, 170),
+            0x02 => Color(85, 85, 85),
+            0x03 => Color(0, 0, 0),
             _ => unreachable!(),
         }
     }
@@ -690,5 +691,47 @@ impl From<u8> for MonoPalette {
 impl From<MonoPalette> for u8 {
     fn from(mp: MonoPalette) -> u8 {
         (mp.color3 as u8) << 6 | (mp.color2 as u8) << 4 | (mp.color1 as u8) << 2 | (mp.color0 as u8)
+    }
+}
+
+struct Color(u8, u8, u8);
+
+impl From<u16> for Color {
+    fn from(color: u16) -> Color {
+        Color(
+            (color & 0x001f) as u8,
+            ((color & 0x03e0) >> 5) as u8,
+            ((color & 0x7c00) >> 10) as u8,
+        )
+    }
+}
+
+struct ColorPalette {
+    color0: Color,
+    color1: Color,
+    color2: Color,
+    color3: Color,
+}
+
+impl Palette for ColorPalette {
+    fn color(self, color: u8) -> Color {
+        match color & 0x03 {
+            0x00 => self.color0,
+            0x01 => self.color1,
+            0x02 => self.color2,
+            0x03 => self.color3,
+            _ => unreachable!(),
+        }
+    }
+}
+
+impl ColorPalette {
+    fn from_u16(color0: u16, color1: u16, color2: u16, color3: u16) -> Self {
+        Self {
+            color0: color0.into(),
+            color1: color1.into(),
+            color2: color2.into(),
+            color3: color3.into(),
+        }
     }
 }
