@@ -16,5 +16,5 @@ impl MBC for None {
         self.cart.data()[address as usize]
     }
 
-    fn write(&mut self, address: u16, value: u8) {}
+    fn write(&mut self, _address: u16, _value: u8) {}
 }
