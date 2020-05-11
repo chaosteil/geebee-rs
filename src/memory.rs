@@ -1,10 +1,10 @@
 use crate::cart::{Cartridge, Controller};
+use crate::mbc;
 use std::{fs::File, io::Read, path::Path};
 
 pub struct Memory {
-    cart: Cartridge,
+    mbc: Box<dyn mbc::MBC>,
     work_ram: [u8; 0x8000],
-    external_ram: [u8; 0x2000],
     high_ram: [u8; 0x7f],
     video: [u8; 0x4000],
     oam: [u8; 0xa0],
@@ -12,12 +12,8 @@ pub struct Memory {
     bootrom: Vec<u8>,
 
     booting: bool,
-    rom_ram_mode: u8,
-    rom_bank: u8,
     work_ram_bank: u8,
-    external_ram_bank: u8,
     video_bank: u8,
-    external_ram_enabled: bool,
 
     oam_access: bool,
     vram_access: bool,
@@ -26,9 +22,8 @@ pub struct Memory {
 impl Memory {
     pub fn new() -> Self {
         Self {
-            cart: Cartridge::new(),
+            mbc: Box::new(mbc::None::new(Cartridge::new())),
             work_ram: [0; 0x8000],
-            external_ram: [0; 0x2000],
             high_ram: [0; 0x7f],
             video: [0; 0x4000],
             oam: [0; 0xa0],
@@ -36,12 +31,8 @@ impl Memory {
             bootrom: Vec::new(),
 
             booting: false,
-            rom_ram_mode: 0,
-            rom_bank: 1,
             work_ram_bank: 1,
-            external_ram_bank: 0,
             video_bank: 0,
-            external_ram_enabled: false,
 
             oam_access: true,
             vram_access: true,
@@ -49,7 +40,13 @@ impl Memory {
     }
 
     pub fn with_cartridge(mut self, cart: Cartridge) -> Self {
-        self.cart = cart;
+        self.mbc = match cart.cart_type().controller {
+            Controller::None => Box::new(mbc::None::new(cart)),
+            Controller::MBC1 => Box::new(mbc::MBC1::new(cart)),
+            Controller::MBC2 => Box::new(mbc::MBC2::new(cart)),
+            Controller::MBC3 => Box::new(mbc::MBC3::new(cart)),
+            _ => panic!("unsupprted mbc"),
+        };
         self
     }
 
@@ -80,14 +77,11 @@ impl Memory {
                 if self.booting {
                     self.bootrom[address as usize]
                 } else {
-                    self.cart.data()[address as usize]
+                    self.mbc.read(address)
                 }
             }
-            0x0100..=0x3fff => self.cart.data()[address as usize],
-            0x4000..=0x7fff => {
-                let address = (0x4000 * (self.rom_bank as usize)) + (address as usize - 0x4000);
-                self.cart.data()[address]
-            }
+            0x0100..=0x3fff => self.mbc.read(address),
+            0x4000..=0x7fff => self.mbc.read(address),
             0x8000..=0x9fff => {
                 if !self.vram_access {
                     return 0x00;
@@ -95,14 +89,7 @@ impl Memory {
                 let address = (0x2000 * self.video_bank as u16) + (address - 0x8000);
                 self.video[address as usize]
             }
-            0xa000..=0xbfff => {
-                if self.external_ram_enabled {
-                    let address = (0x1000 * self.external_ram_bank as u16) + (address - 0xa000);
-                    self.external_ram[address as usize]
-                } else {
-                    0
-                }
-            }
+            0xa000..=0xbfff => self.mbc.read(address),
             0xc000..=0xcfff | 0xe000..=0xefff => self.work_ram[address as usize & 0x0fff],
             0xd000..=0xdfff | 0xf000..=0xfdff => {
                 self.work_ram[(self.work_ram_bank as usize * 0x1000) | address as usize & 0x0fff]
@@ -124,76 +111,17 @@ impl Memory {
 
     pub fn write(&mut self, address: u16, value: u8) {
         match address {
-            0x0000..=0x1fff => {
-                self.external_ram_enabled = match self.cart.cart_type().controller {
-                    Controller::MBC1 => (value & 0x0f) == 0x0a,
-                    Controller::MBC2 | Controller::MBC3 => {
-                        if address & 0x0100 == 0 {
-                            !self.external_ram_enabled
-                        } else {
-                            self.external_ram_enabled
-                        }
-                    }
-                    _ => self.external_ram_enabled,
-                }
-            }
-            0x2000..=0x3fff => {
-                self.rom_bank = match self.cart.cart_type().controller {
-                    Controller::MBC1 => {
-                        let mut value = value & 0x1f;
-                        value = match value {
-                            0x00 | 0x20 | 0x40 | 0x60 => value + 0x01,
-                            _ => value,
-                        };
-                        (self.rom_bank & 0xe0) | (value & 0x1f)
-                    }
-                    Controller::MBC2 => {
-                        if address & 0x0100 == 0 {
-                            self.rom_bank
-                        } else {
-                            let value = value & 0x0f;
-                            match value {
-                                0x00 | 0x20 | 0x40 | 0x60 => value + 0x01,
-                                _ => value,
-                            }
-                        }
-                    }
-                    _ => self.rom_bank,
-                }
-            }
-            0x4000..=0x5fff => match self.cart.cart_type().controller {
-                Controller::MBC1 => {
-                    if self.rom_ram_mode == 0x01 {
-                        self.external_ram_bank = value & 0x03;
-                    } else {
-                        self.rom_bank = (self.rom_bank & 0xcf) | ((value & 0x03) << 4);
-                    }
-                }
-                _ => {}
-            },
-            0x6000..=0x7fff => match self.cart.cart_type().controller {
-                Controller::MBC1 => {
-                    self.rom_ram_mode = value & 0x01;
-                    if self.rom_ram_mode == 0x00 {
-                        self.external_ram_bank = 0;
-                    } else {
-                        self.rom_bank &= 0x1f;
-                    }
-                }
-                _ => {}
-            },
+            0x0000..=0x1fff => self.mbc.write(address, value),
+            0x2000..=0x3fff => self.mbc.write(address, value),
+            0x4000..=0x5fff => self.mbc.write(address, value),
+            0x6000..=0x7fff => self.mbc.write(address, value),
             0x8000..=0x9fff => {
                 if self.vram_access {
                     let address = (0x2000 * self.video_bank as u16) + (address - 0x8000);
                     self.video[address as usize] = value;
                 }
             }
-            0xa000..=0xbfff => {
-                if self.external_ram_enabled {
-                    let address = (0x1000 * self.external_ram_bank as u16) + (address - 0xa000);
-                    self.external_ram[address as usize] = value;
-                }
-            }
+            0xa000..=0xbfff => self.mbc.write(address, value),
             0xc000..=0xcfff | 0xe000..=0xefff => self.work_ram[address as usize & 0x0fff] = value,
             0xd000..=0xdfff | 0xf000..=0xfdff => {
                 self.work_ram

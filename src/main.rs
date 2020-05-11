@@ -3,6 +3,7 @@ mod cart;
 mod cpu;
 mod joypad;
 mod lcd;
+mod mbc;
 mod memory;
 mod timer;
 mod ui;

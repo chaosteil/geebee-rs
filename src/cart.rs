@@ -7,6 +7,7 @@ use thiserror::Error;
 pub struct Cartridge {
     title: String,
     cart_type: CartType,
+    ram_size: u8,
     cgb: bool,
     sgb: bool,
     data: Vec<u8>,
@@ -17,6 +18,7 @@ impl Cartridge {
         Self {
             title: "EMPTY".to_string(),
             cart_type: CartType::default(),
+            ram_size: 9,
             cgb: false,
             sgb: false,
             data: vec![],
@@ -35,8 +37,11 @@ impl Cartridge {
             return Err(Error::InvalidRom);
         }
         Self::verify_checksum(&data)?;
-        self.title = String::from_utf8((data[0x0134..0x134 + 11]).to_vec())?;
+        self.title = String::from_utf8((data[0x0134..0x134 + 11]).to_vec())?
+            .trim_matches(char::from(0))
+            .to_string();
         self.cart_type = CartType::from(data[0x0147]);
+        self.ram_size = data[0x149];
         self.cgb = match data[0x0143] {
             0x80 | 0xc0 => true,
             _ => false,
@@ -64,6 +69,10 @@ impl Cartridge {
         &self.data
     }
 
+    pub fn ram_size(&self) -> u8 {
+        self.ram_size
+    }
+
     fn verify_checksum(data: &[u8]) -> Result<(), Error> {
         let mut x: u8 = 0;
         for i in data.iter().take(0x14c + 1).skip(0x0134) {
@@ -86,6 +95,31 @@ pub struct CartType {
     pub rumble: bool,
 }
 
+impl CartType {
+    fn new(controller: Controller) -> Self {
+        Self {
+            controller,
+            ..Default::default()
+        }
+    }
+    fn with_ram(mut self) -> Self {
+        self.ram = true;
+        self
+    }
+    fn with_battery(mut self) -> Self {
+        self.battery = true;
+        self
+    }
+    fn with_timer(mut self) -> Self {
+        self.timer = true;
+        self
+    }
+    fn with_rumble(mut self) -> Self {
+        self.rumble = true;
+        self
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Controller {
     None,
@@ -105,121 +139,34 @@ impl Default for Controller {
 impl From<u8> for CartType {
     fn from(t: u8) -> CartType {
         match t {
-            0x00 => CartType {
-                controller: Controller::None,
-                ..Default::default()
-            },
-            0x01 => CartType {
-                controller: Controller::MBC1,
-                ..Default::default()
-            },
-            0x02 => CartType {
-                controller: Controller::MBC1,
-                ram: true,
-                ..Default::default()
-            },
-            0x03 => CartType {
-                controller: Controller::MBC1,
-                ram: true,
-                battery: true,
-                ..Default::default()
-            },
-            0x05 => CartType {
-                controller: Controller::MBC2,
-                ..Default::default()
-            },
-            0x06 => CartType {
-                controller: Controller::MBC2,
-                battery: true,
-                ..Default::default()
-            },
-            0x08 => CartType {
-                controller: Controller::None,
-                ram: true,
-                ..Default::default()
-            },
-            0x09 => CartType {
-                controller: Controller::None,
-                ram: true,
-                battery: true,
-                ..Default::default()
-            },
-            0x0f => CartType {
-                controller: Controller::MBC3,
-                timer: true,
-                battery: true,
-                ..Default::default()
-            },
-            0x10 => CartType {
-                controller: Controller::MBC3,
-                timer: true,
-                ram: true,
-                battery: true,
-                ..Default::default()
-            },
-            0x11 => CartType {
-                controller: Controller::MBC3,
-                ..Default::default()
-            },
-            0x12 => CartType {
-                controller: Controller::MBC3,
-                ram: true,
-                ..Default::default()
-            },
-            0x13 => CartType {
-                controller: Controller::MBC3,
-                ram: true,
-                battery: true,
-                ..Default::default()
-            },
-            0x15 => CartType {
-                controller: Controller::MBC4,
-                ..Default::default()
-            },
-            0x16 => CartType {
-                controller: Controller::MBC4,
-                ram: true,
-                ..Default::default()
-            },
-            0x17 => CartType {
-                controller: Controller::MBC4,
-                ram: true,
-                battery: true,
-                ..Default::default()
-            },
-            0x19 => CartType {
-                controller: Controller::MBC5,
-                ..Default::default()
-            },
-            0x1a => CartType {
-                controller: Controller::MBC5,
-                ram: true,
-                ..Default::default()
-            },
-            0x1b => CartType {
-                controller: Controller::MBC5,
-                ram: true,
-                battery: true,
-                ..Default::default()
-            },
-            0x1c => CartType {
-                controller: Controller::MBC5,
-                rumble: true,
-                ..Default::default()
-            },
-            0x1d => CartType {
-                controller: Controller::MBC5,
-                rumble: true,
-                ram: true,
-                ..Default::default()
-            },
-            0x1e => CartType {
-                controller: Controller::MBC5,
-                rumble: true,
-                ram: true,
-                battery: true,
-                ..Default::default()
-            },
+            0x00 => CartType::new(Controller::None),
+            0x01 => CartType::new(Controller::MBC1),
+            0x02 => CartType::new(Controller::MBC1).with_ram(),
+            0x03 => CartType::new(Controller::MBC1).with_ram().with_battery(),
+            0x05 => CartType::new(Controller::MBC2),
+            0x06 => CartType::new(Controller::MBC2).with_battery(),
+            0x08 => CartType::new(Controller::None).with_ram(),
+            0x09 => CartType::new(Controller::None).with_ram().with_battery(),
+            0x0f => CartType::new(Controller::MBC3).with_timer().with_battery(),
+            0x10 => CartType::new(Controller::MBC3)
+                .with_timer()
+                .with_ram()
+                .with_battery(),
+            0x11 => CartType::new(Controller::MBC3),
+            0x12 => CartType::new(Controller::MBC3).with_ram(),
+            0x13 => CartType::new(Controller::MBC3).with_ram().with_battery(),
+            0x15 => CartType::new(Controller::MBC4),
+            0x16 => CartType::new(Controller::MBC4).with_ram(),
+            0x17 => CartType::new(Controller::MBC4).with_ram().with_battery(),
+            0x19 => CartType::new(Controller::MBC5),
+            0x1a => CartType::new(Controller::MBC5).with_ram(),
+            0x1b => CartType::new(Controller::MBC5).with_ram().with_battery(),
+            0x1c => CartType::new(Controller::MBC5).with_rumble(),
+            0x1d => CartType::new(Controller::MBC5).with_rumble().with_ram(),
+            0x1e => CartType::new(Controller::MBC5)
+                .with_rumble()
+                .with_ram()
+                .with_battery(),
             _ => panic!("unable to handle cartridge type {}", t),
         }
     }

@@ -1,0 +1,20 @@
+use crate::cart;
+use crate::mbc::MBC;
+
+pub struct None {
+    cart: cart::Cartridge,
+}
+
+impl None {
+    pub fn new(cart: cart::Cartridge) -> Self {
+        Self { cart: cart }
+    }
+}
+
+impl MBC for None {
+    fn read(&self, address: u16) -> u8 {
+        self.cart.data()[address as usize]
+    }
+
+    fn write(&mut self, address: u16, value: u8) {}
+}
