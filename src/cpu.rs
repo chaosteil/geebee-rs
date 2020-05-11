@@ -1087,7 +1087,7 @@ mod test {
     use super::*;
 
     fn new_cpu(data: &[u8]) -> CPU {
-        let mut cpu = CPU::new(Memory::new().with_bootrom(data), LCD::new());
+        let mut cpu = CPU::new(Memory::new().with_bootrom(data), LCD::new(false));
         cpu.sp = 0xfffe;
         cpu.pc = 0;
         cpu
