@@ -73,7 +73,17 @@ impl Memory {
                     self.bootrom[address as usize]
                 }
             }
-            0x0100..=0xbfff => self.mbc.read(address),
+            0x0100..=0xbfff => {
+                if !self.booting {
+                    self.mbc.read(address)
+                } else {
+                    if address >= 0x0100 && address <= 0x014f {
+                        self.mbc.read(address)
+                    } else {
+                        self.bootrom[address as usize]
+                    }
+                }
+            }
             0xc000..=0xcfff | 0xe000..=0xefff => self.work_ram[address as usize & 0x0fff],
             0xd000..=0xdfff | 0xf000..=0xfdff => {
                 self.work_ram[(self.work_ram_bank as usize * 0x1000) | address as usize & 0x0fff]
