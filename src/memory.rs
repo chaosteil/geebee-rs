@@ -41,6 +41,7 @@ impl Memory {
             Controller::MBC1 => Box::new(mbc::MBC1::new(cart)),
             Controller::MBC2 => Box::new(mbc::MBC2::new(cart)),
             Controller::MBC3 => Box::new(mbc::MBC3::new(cart)),
+            Controller::MBC5 => Box::new(mbc::MBC5::new(cart)),
             _ => panic!("unsupprted mbc"),
         };
         self
