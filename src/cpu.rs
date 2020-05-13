@@ -20,6 +20,9 @@ pub struct CPU {
 
     sb: u8,
     sc: u8,
+
+    speed: u8,
+    prepare_speed: bool,
 }
 
 impl CPU {
@@ -38,6 +41,8 @@ impl CPU {
             pc: if has_bootrom { 0 } else { 0x0100 },
             sb: 0,
             sc: 0,
+            speed: 1,
+            prepare_speed: false,
         }
     }
 
@@ -61,7 +66,7 @@ impl CPU {
         } else {
             self.handle_instruction()
         };
-        if self.timer.advance(timing) {
+        if self.timer.advance(timing * self.speed) {
             self.interrupts.flag |= 0x04;
         }
         self.lcd.advance(&mut self.interrupts, timing);
@@ -132,6 +137,10 @@ impl CPU {
             | 0xff4f
             | 0xff51..=0xff55
             | 0xff68..=0xff6b => self.lcd.handle_read(address),
+            0xff4d => {
+                (if self.speed == 1 { 0x00 } else { 0x80 })
+                    | (if self.prepare_speed { 0x01 } else { 0x0 })
+            }
             0xff50 => 0,
             0xffff => self.interrupts.enable,
             _ => self.memory.read(address),
@@ -163,7 +172,7 @@ impl CPU {
             | 0xff4f
             | 0xff51..=0xff55
             | 0xff68..=0xff6b => self.lcd.handle_write(&mut self.memory, address, value),
-            0xff4d => println!("Wants double speed mode"),
+            0xff4d => self.prepare_speed = value == 0x01,
             0xff50 => {
                 if value != 0 {
                     self.memory.disable_booting()
@@ -590,7 +599,16 @@ impl CPU {
     fn handle_op(&mut self, op: u8) -> timer::Timing {
         match op {
             0x00 => 4,
-            0x10 => { self.halt = true; 4 }
+            0x10 => {
+                self.read_pc();
+                if self.prepare_speed {
+                    self.speed = if self.speed == 1 { 2 } else { 1 };
+                    self.prepare_speed = false;
+                } else {
+                    self.halt = true;
+                }
+                4
+            }
 
             0x20 => self.op_jr(!self.regs.f.zero),
             0x30 => self.op_jr(!self.regs.f.carry),
