@@ -56,7 +56,21 @@ struct Registers {
     obpd: Vec<u8>,
     dma_source: u16,
     dma_dest: u16,
+    hdma_type: HDMA,
     hdma_transfer: u8,
+}
+
+#[derive(Copy, Clone)]
+enum HDMA {
+    None,
+    GDMA,
+    HDMA,
+}
+
+impl Default for HDMA {
+    fn default() -> Self {
+        Self::None
+    }
 }
 
 #[derive(Default, Clone)]
@@ -225,14 +239,7 @@ impl LCD {
             0xff43 => self.regs.scx = value,
             0xff44 => {}
             0xff45 => self.regs.lyc = value,
-            0xff46 => {
-                let start = (value as u16) << 8;
-                let end = ((value as u16) << 8) | 0x009f;
-                for dest in start..=end {
-                    let v = mem.read(dest);
-                    self.handle_write(mem, 0xfe00 | (dest & 0xff) as u16, v);
-                }
-            }
+            0xff46 => self.dma(mem, value),
             0xff47 => self.regs.bgp = value.into(),
             0xff48 => self.regs.obp0 = value.into(),
             0xff49 => self.regs.obp1 = value.into(),
@@ -243,7 +250,7 @@ impl LCD {
             0xff52 => self.regs.dma_source = (value as u16) | (self.regs.dma_source & 0xf0),
             0xff53 => self.regs.dma_dest = ((value as u16) << 8) | (self.regs.dma_dest & 0x0f),
             0xff54 => self.regs.dma_dest = (value as u16) | (self.regs.dma_dest & 0xf0),
-            0xff55 => self.start_hdma_transfer(mem, value),
+            0xff55 => self.start_hdma_transfer(value),
             0xff68 => self.regs.bgpi = value & 0xbf,
             0xff69 => {
                 self.regs.bgpd[(self.regs.bgpi & 0x3f) as usize] = value;
@@ -262,23 +269,63 @@ impl LCD {
         }
     }
 
-    fn start_hdma_transfer(&mut self, mem: &mut Memory, value: u8) {
-        let length = (value & 0x7f) as u16 * 0x10;
-        if value & 0x80 == 0 {
-            let start = self.regs.dma_source & 0xfff0;
-            let end = (self.regs.dma_dest & 0x1ff0) | 0x8000;
-            for i in 0..length {
-                let v = mem.read(start + i);
-                self.handle_write(mem, end + i, v);
-            }
-            self.regs.hdma_transfer = 0xff;
-        } else {
-            // TODO: Hblank transfer
-            println!("hblank :(")
+    fn dma(&mut self, mem: &mut Memory, value: u8) {
+        let start = (value as u16) << 8;
+        let end = ((value as u16) << 8) | 0x009f;
+        for dest in start..=end {
+            let v = mem.read(dest);
+            self.handle_write(mem, 0xfe00 | (dest & 0xff) as u16, v);
         }
     }
 
-    pub fn advance(&mut self, interrupts: &mut Interrupts, timing: Timing) {
+    fn start_hdma_transfer(&mut self, value: u8) {
+        if let HDMA::HDMA = self.regs.hdma_type {
+            if value & 0x80 == 0 {
+                self.regs.hdma_transfer |= 0x80;
+                self.regs.hdma_type = HDMA::None;
+            }
+            return;
+        }
+        self.regs.dma_source &= 0xfff0;
+        self.regs.dma_dest &= 0x1ff0;
+        self.regs.hdma_type = if value & 0x80 != 0 {
+            HDMA::HDMA
+        } else {
+            HDMA::GDMA
+        };
+        self.regs.hdma_transfer = value & 0x7f;
+    }
+
+    fn hdma_transfer(&mut self, mem: &mut Memory) {
+        match self.regs.hdma_type {
+            HDMA::GDMA => {
+                while self.regs.hdma_transfer != 0xff {
+                    self.hdma_transfer_block(mem);
+                }
+            }
+            HDMA::HDMA => {
+                self.hdma_transfer_block(mem);
+            }
+            _ => {}
+        }
+    }
+
+    fn hdma_transfer_block(&mut self, mem: &mut Memory) {
+        for i in 0..0x10 {
+            let start = self.regs.dma_source & 0xfff0;
+            let end = (self.regs.dma_dest & 0x1ff0) | 0x8000;
+            let v = mem.read(start + i);
+            self.handle_write(mem, end + i, v);
+        }
+        self.regs.dma_source += 0x10;
+        self.regs.dma_dest += 0x10;
+        self.regs.hdma_transfer = self.regs.hdma_transfer.wrapping_sub(1);
+        if self.regs.hdma_transfer == 0xff {
+            self.regs.hdma_type = HDMA::None;
+        }
+    }
+
+    pub fn advance(&mut self, interrupts: &mut Interrupts, mem: &mut Memory, timing: Timing) {
         self.done_frame = false;
 
         self.oam_access = true;
@@ -314,6 +361,7 @@ impl LCD {
                     self.mode_timing -= 172;
                     self.set_mode(interrupts, Mode::HBlank);
                     self.draw_line(self.regs.ly);
+                    self.hdma_transfer(mem);
                 }
             }
             Mode::HBlank => {
@@ -462,18 +510,41 @@ impl LCD {
             for i in self.regs.wx.wrapping_sub(7)..SCREEN_SIZE.0 {
                 let x = i.wrapping_sub(self.regs.wx).wrapping_add(7);
                 let (tile_x, tile_y) = (x / 8, y / 8);
-                let (pixel_x, pixel_y) = (8 - (x % 8) - 1, y % 8);
+                let (pixel_x, mut pixel_y) = (8 - (x % 8) - 1, y % 8);
+                let tile_address = (win_tile_map + (tile_y as u16 * 32) + tile_x as u16) as usize;
+                if self.cgb {
+                    let tileinfo: BGMapAttributes = self.video[tile_address + 0x2000].into();
+                    if tileinfo.reverse_y {
+                        pixel_y = 8u8.wrapping_sub(pixel_y).wrapping_sub(1);
+                    }
+                }
 
-                let tile =
-                    self.video[(win_tile_map + (tile_y as u16 * 32) + tile_x as u16) as usize];
+                let tile = self.video[tile_address];
                 let address = (0x1000u16 as i16)
                     .wrapping_add(tile as i8 as i16 * 16)
                     .wrapping_add(pixel_y as i8 as i16 * 2) as u16
                     as usize;
-                let (bottom, top) = (self.video[address], self.video[address + 1]);
-                let color = LCD::color_number(pixel_x as u8, top, bottom);
+                let (pixel, color) = if self.cgb {
+                    let tileinfo: BGMapAttributes = self.video[tile_address + 0x2000].into();
+                    priority[i as usize] = if tileinfo.priority { 0x01 } else { 0x00 };
+                    let (bottom, top) = (
+                        self.video[address + (0x2000 * tileinfo.bank)],
+                        self.video[address + 1 + (0x2000 * tileinfo.bank)],
+                    );
+                    let pixel_x = if tileinfo.reverse_x {
+                        8u8.wrapping_sub(pixel_x).wrapping_sub(1)
+                    } else {
+                        pixel_x
+                    };
+                    let palette = self.read_palette(&self.regs.bgpd, tileinfo.palette);
+                    let color = LCD::color_number(pixel_x as u8, top, bottom);
+                    (palette.color(color), color)
+                } else {
+                    let (bottom, top) = (self.video[address], self.video[address + 1]);
+                    let color = LCD::color_number(pixel_x as u8, top, bottom);
+                    (self.regs.bgp.color(color), color)
+                };
                 bgcolors[i as usize] = color;
-                let pixel = self.regs.bgp.color(color);
                 self.set_pixel(i, ly, pixel);
             }
         }

@@ -66,10 +66,11 @@ impl CPU {
         } else {
             self.handle_instruction()
         };
-        if self.timer.advance(timing * self.speed) {
+        if self.timer.advance(timing) {
             self.interrupts.flag |= 0x04;
         }
-        self.lcd.advance(&mut self.interrupts, timing);
+        self.lcd
+            .advance(&mut self.interrupts, &mut self.memory, timing / self.speed);
     }
 
     pub fn lcd(&self) -> &LCD {
