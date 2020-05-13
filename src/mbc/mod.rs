@@ -1,3 +1,4 @@
+mod boot;
 mod mbc;
 mod mbc1;
 mod mbc2;
@@ -5,6 +6,7 @@ mod mbc3;
 mod mbc5;
 mod none;
 
+pub use boot::*;
 pub use mbc::*;
 pub use mbc1::*;
 pub use mbc2::*;

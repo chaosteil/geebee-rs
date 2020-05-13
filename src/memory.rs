@@ -1,15 +1,14 @@
 use crate::cart::{Cartridge, Controller};
 use crate::mbc;
+use crate::mbc::MBC;
 use std::{fs::File, io::Read, path::Path};
 
 pub struct Memory {
-    mbc: Box<dyn mbc::MBC>,
+    state: Option<State>,
     work_ram: Vec<u8>,
     high_ram: [u8; 0x7f],
     io: [u8; 0x80],
-    bootrom: Vec<u8>,
 
-    booting: bool,
     work_ram_bank: u8,
 
     cgb_mode: bool,
@@ -18,38 +17,40 @@ pub struct Memory {
 impl Memory {
     pub fn new() -> Self {
         Self {
-            mbc: Box::new(mbc::None::new(Cartridge::new())),
-            work_ram: vec![0; 0x2000],
+            state: None,
             high_ram: [0; 0x7f],
             io: [0; 0x80],
-            bootrom: Vec::new(),
 
-            booting: false,
             work_ram_bank: 1,
+            work_ram: vec![0; 0x2000],
 
             cgb_mode: false,
         }
     }
 
-    pub fn with_cartridge(mut self, cart: Cartridge) -> Self {
-        self.cgb_mode = cart.cgb();
-        if self.cgb_mode {
-            self.work_ram = vec![0; 0x8000];
+    pub fn with_cartridge(cart: Cartridge) -> Self {
+        let mut mem = Self::new();
+        mem.cgb_mode = cart.cgb();
+        if mem.cgb_mode {
+            mem.work_ram = vec![0; 0x8000];
         }
-        self.mbc = match cart.cart_type().controller {
+        mem.state = Some(State::MBC(match cart.cart_type().controller {
             Controller::None => Box::new(mbc::None::new(cart)),
             Controller::MBC1 => Box::new(mbc::MBC1::new(cart)),
             Controller::MBC2 => Box::new(mbc::MBC2::new(cart)),
             Controller::MBC3 => Box::new(mbc::MBC3::new(cart)),
             Controller::MBC5 => Box::new(mbc::MBC5::new(cart)),
             _ => panic!("unsupprted mbc"),
-        };
-        self
+        }));
+        mem
     }
 
     pub fn with_bootrom(mut self, data: &[u8]) -> Self {
-        self.booting = true;
-        self.bootrom = data.to_vec();
+        self.state = match self.state {
+            Some(State::MBC(m)) => Some(State::Boot(mbc::Boot::with_mbc(data, m))),
+            None => Some(State::Boot(mbc::Boot::with_data(data))),
+            _ => panic!("already initialized with bootrom"),
+        };
         self
     }
 
@@ -66,24 +67,7 @@ impl Memory {
 
     pub fn read(&self, address: u16) -> u8 {
         match address {
-            0x0000..=0x00ff => {
-                if !self.booting {
-                    self.mbc.read(address)
-                } else {
-                    self.bootrom[address as usize]
-                }
-            }
-            0x0100..=0xbfff => {
-                if !self.booting {
-                    self.mbc.read(address)
-                } else {
-                    if address >= 0x0100 && address <= 0x014f {
-                        self.mbc.read(address)
-                    } else {
-                        self.bootrom[address as usize]
-                    }
-                }
-            }
+            0x0000..=0xbfff => self.state.as_ref().unwrap().read(address),
             0xc000..=0xcfff | 0xe000..=0xefff => self.work_ram[address as usize & 0x0fff],
             0xd000..=0xdfff | 0xf000..=0xfdff => {
                 self.work_ram[(self.work_ram_bank as usize * 0x1000) | address as usize & 0x0fff]
@@ -104,7 +88,7 @@ impl Memory {
 
     pub fn write(&mut self, address: u16, value: u8) {
         match address {
-            0x0000..=0xbfff => self.mbc.write(address, value),
+            0x0000..=0xbfff => self.state.as_mut().unwrap().write(address, value),
             0xc000..=0xcfff | 0xe000..=0xefff => self.work_ram[address as usize & 0x0fff] = value,
             0xd000..=0xdfff | 0xf000..=0xfdff => {
                 self.work_ram
@@ -129,10 +113,38 @@ impl Memory {
     }
 
     pub fn has_bootrom(&self) -> bool {
-        !self.bootrom.is_empty()
+        match self.state {
+            Some(State::Boot(_)) => true,
+            _ => false,
+        }
     }
 
     pub fn disable_booting(&mut self) {
-        self.booting = false;
+        let state = self.state.take();
+        self.state = match state {
+            Some(State::Boot(b)) => Some(State::MBC(b.mbc())),
+            _ => state,
+        }
+    }
+}
+
+enum State {
+    Boot(mbc::Boot),
+    MBC(Box<dyn mbc::MBC>),
+}
+
+impl mbc::MBC for State {
+    fn read(&self, address: u16) -> u8 {
+        match self {
+            State::MBC(m) => m.read(address),
+            State::Boot(b) => b.read(address),
+        }
+    }
+
+    fn write(&mut self, address: u16, value: u8) {
+        match self {
+            State::MBC(m) => m.write(address, value),
+            State::Boot(b) => b.write(address, value),
+        }
     }
 }

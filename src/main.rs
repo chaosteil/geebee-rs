@@ -34,7 +34,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cart = cart::Cartridge::new().with_path(Path::new(matches.value_of("rom").unwrap()))?;
 
-    let mut memory = memory::Memory::new().with_cartridge(cart);
+    let mut memory = memory::Memory::with_cartridge(cart);
     if let Some(bootrom) = matches.value_of("bootrom") {
         memory = memory.with_bootrom_path(Path::new(bootrom))?;
     }
