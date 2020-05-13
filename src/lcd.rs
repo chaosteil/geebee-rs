@@ -402,10 +402,17 @@ impl LCD {
             for i in 0..SCREEN_SIZE.0 {
                 let x = i.wrapping_add(self.regs.scx);
                 let (tile_x, tile_y) = (x / 8, y / 8);
-                let (pixel_x, pixel_y) = (8 - (x % 8) - 1, y % 8);
+                let (pixel_x, mut pixel_y) = (8 - (x % 8) - 1, y % 8);
 
                 let tile_address = (bg_tile_map + (tile_y as u16 * 32) + tile_x as u16) as usize;
                 let tile = self.video[tile_address];
+                if self.cgb {
+                    let tileinfo: BGMapAttributes = self.video[tile_address + 0x2000].into();
+                    if tileinfo.reverse_y {
+                        pixel_y = 8u8.wrapping_sub(pixel_y).wrapping_sub(1);
+                    }
+                }
+
                 let address = if !unsigned {
                     (bg_tile_data as i16)
                         .wrapping_add(tile as i8 as i16 * 16)
@@ -422,6 +429,11 @@ impl LCD {
                         self.video[address + (0x2000 * tileinfo.bank)],
                         self.video[address + 1 + (0x2000 * tileinfo.bank)],
                     );
+                    let pixel_x = if tileinfo.reverse_x {
+                        8u8.wrapping_sub(pixel_x).wrapping_sub(1)
+                    } else {
+                        pixel_x
+                    };
                     let palette = self.read_palette(&self.regs.bgpd, tileinfo.palette);
                     let color = LCD::color_number(pixel_x as u8, top, bottom);
                     (palette.color(color), color)
@@ -508,10 +520,12 @@ impl LCD {
                     if info.flags.reverse_x {
                         pixel_x = 8u8.wrapping_sub(pixel_x).wrapping_sub(1);
                     }
+                    let screen_x = info.x.wrapping_add(x).wrapping_sub(8) as usize;
                     let color = LCD::color_number(pixel_x as u8, top, bottom);
                     if color != 0x00
                         && !(info.flags.priority
-                            && bgcolors[info.x.wrapping_add(x).wrapping_sub(8) as usize] > 0)
+                            && bgcolors[screen_x] > 0
+                            && priority[screen_x] > 0)
                     {
                         let pixel = if self.cgb {
                             let palette =
@@ -525,7 +539,7 @@ impl LCD {
                             };
                             obp.color(color)
                         };
-                        self.set_pixel(info.x.wrapping_add(x).wrapping_sub(8), ly, pixel);
+                        self.set_pixel(screen_x as u8, ly, pixel);
                     }
                 }
             }
@@ -652,15 +666,12 @@ impl From<STAT> for u8 {
 }
 
 trait Palette {
-    fn color(self, color: u8) -> Color;
+    fn color(&self, color: u8) -> Color;
 }
 
 #[derive(Default, Copy, Clone)]
 struct MonoPalette {
-    color3: GrayShades,
-    color2: GrayShades,
-    color1: GrayShades,
-    color0: GrayShades,
+    color: [GrayShades; 4],
 }
 
 #[derive(FromPrimitive, ToPrimitive, Copy, Clone)]
@@ -678,14 +689,8 @@ impl Default for GrayShades {
 }
 
 impl Palette for MonoPalette {
-    fn color(self, color: u8) -> Color {
-        let color = match color & 0x03 {
-            0x00 => ToPrimitive::to_u8(&self.color0).unwrap(),
-            0x01 => ToPrimitive::to_u8(&self.color1).unwrap(),
-            0x02 => ToPrimitive::to_u8(&self.color2).unwrap(),
-            0x03 => ToPrimitive::to_u8(&self.color3).unwrap(),
-            _ => unreachable!(),
-        };
+    fn color(&self, color: u8) -> Color {
+        let color = ToPrimitive::to_u8(&self.color[(color & 0x03) as usize]).unwrap();
         match color & 0x03 {
             0x00 => Color(255, 255, 255),
             0x01 => Color(170, 170, 170),
@@ -699,20 +704,26 @@ impl Palette for MonoPalette {
 impl From<u8> for MonoPalette {
     fn from(f: u8) -> MonoPalette {
         MonoPalette {
-            color3: FromPrimitive::from_u8((f >> 6) & 0x03).unwrap(),
-            color2: FromPrimitive::from_u8((f >> 4) & 0x03).unwrap(),
-            color1: FromPrimitive::from_u8((f >> 2) & 0x03).unwrap(),
-            color0: FromPrimitive::from_u8(f & 0x03).unwrap(),
+            color: [
+                FromPrimitive::from_u8(f & 0x03).unwrap(),
+                FromPrimitive::from_u8((f >> 2) & 0x03).unwrap(),
+                FromPrimitive::from_u8((f >> 4) & 0x03).unwrap(),
+                FromPrimitive::from_u8((f >> 6) & 0x03).unwrap(),
+            ],
         }
     }
 }
 
 impl From<MonoPalette> for u8 {
     fn from(mp: MonoPalette) -> u8 {
-        (mp.color3 as u8) << 6 | (mp.color2 as u8) << 4 | (mp.color1 as u8) << 2 | (mp.color0 as u8)
+        (mp.color[3] as u8) << 6
+            | (mp.color[2] as u8) << 4
+            | (mp.color[1] as u8) << 2
+            | (mp.color[0] as u8)
     }
 }
 
+#[derive(Copy, Clone)]
 struct Color(u8, u8, u8);
 
 impl From<u16> for Color {
@@ -726,31 +737,19 @@ impl From<u16> for Color {
 }
 
 struct ColorPalette {
-    color0: Color,
-    color1: Color,
-    color2: Color,
-    color3: Color,
+    color: [Color; 4],
 }
 
 impl Palette for ColorPalette {
-    fn color(self, color: u8) -> Color {
-        match color & 0x03 {
-            0x00 => self.color0,
-            0x01 => self.color1,
-            0x02 => self.color2,
-            0x03 => self.color3,
-            _ => unreachable!(),
-        }
+    fn color(&self, color: u8) -> Color {
+        self.color[(color & 0x03) as usize]
     }
 }
 
 impl ColorPalette {
     fn from_u16(color0: u16, color1: u16, color2: u16, color3: u16) -> Self {
         Self {
-            color0: color0.into(),
-            color1: color1.into(),
-            color2: color2.into(),
-            color3: color3.into(),
+            color: [color0.into(), color1.into(), color2.into(), color3.into()],
         }
     }
 }

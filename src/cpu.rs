@@ -163,6 +163,7 @@ impl CPU {
             | 0xff4f
             | 0xff51..=0xff55
             | 0xff68..=0xff6b => self.lcd.handle_write(&mut self.memory, address, value),
+            0xff4d => println!("Wants double speed mode"),
             0xff50 => {
                 if value != 0 {
                     self.memory.disable_booting()
