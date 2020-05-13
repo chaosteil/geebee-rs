@@ -66,7 +66,7 @@ impl CPU {
         } else {
             self.handle_instruction()
         };
-        if self.timer.advance(timing) {
+        if self.timer.advance(timing * self.speed) {
             self.interrupts.flag |= 0x04;
         }
         self.lcd
