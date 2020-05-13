@@ -70,7 +70,7 @@ impl Memory {
             0x0000..=0xbfff => self.state.read(address),
             0xc000..=0xcfff => self.work_ram[address as usize - 0xc000],
             0xd000..=0xdfff => {
-                self.work_ram[(self.work_ram_bank * 0x1000) + address as usize - 0xd000]
+                self.work_ram[(self.work_ram_bank * 0x1000) + (address as usize - 0xd000)]
             }
             0xe000..=0xfdff => self.read(address - 0x2000),
             0xfea0..=0xfeff => 0xff,
@@ -98,7 +98,7 @@ impl Memory {
             0xfea0..=0xfeff => {}
             0xff70 => {
                 if self.cgb_mode {
-                    self.work_ram_bank = match value & 0x7f {
+                    self.work_ram_bank = match value & 0x07 {
                         0 => 1,
                         n => n as usize,
                     }

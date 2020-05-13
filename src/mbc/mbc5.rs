@@ -6,7 +6,7 @@ pub struct MBC5 {
     rom_bank: usize,
 
     ram_enabled: bool,
-    ram_bank: u8,
+    ram_bank: usize,
     ram: Vec<u8>,
 }
 
@@ -52,14 +52,15 @@ impl MBC for MBC5 {
             0x0000..=0x1fff => self.ram_enabled = (value & 0x0f) == 0x0a,
             0x2000..=0x2fff => self.rom_bank = (self.rom_bank & 0xff00) | value as usize,
             0x3000..=0x3fff => {
-                self.rom_bank = (((value & 0x01) as usize) << 8) | (self.rom_bank & 0x00ff)
+                self.rom_bank =
+                    if value & 0x01 != 0 { 0x0100 } else { 0x0000 } | (self.rom_bank & 0x00ff)
             }
-            0x4000..=0x5fff => self.ram_bank = value & 0x0f,
+            0x4000..=0x5fff => self.ram_bank = (value & 0x0f) as usize,
             0x6000..=0x7fff => {}
             0xa000..=0xbfff => {
                 if self.ram_enabled {
-                    let address = (0x1000 * self.ram_bank as u16) + (address - 0xa000);
-                    self.ram[address as usize] = value;
+                    let address = (0x1000 * self.ram_bank) + ((address as usize) - 0xa000);
+                    self.ram[address] = value;
                 }
             }
             _ => unreachable!(),

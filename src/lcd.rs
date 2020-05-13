@@ -131,7 +131,7 @@ impl From<u8> for SpriteAttributes {
             reverse_x: f & 0x20 != 0,
             palette: (f & 0x10) >> 4,
             bank: ((f & 0x08) >> 3) as usize,
-            color_palette: f & 0x03,
+            color_palette: f & 0x07,
         }
     }
 }
