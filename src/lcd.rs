@@ -107,51 +107,6 @@ struct STAT {
     mode: Mode,
 }
 
-struct SpriteInfo {
-    x: u8,
-    y: u8,
-    tile: u8,
-    flags: SpriteAttributes,
-}
-
-struct SpriteAttributes {
-    priority: bool,
-    reverse_y: bool,
-    reverse_x: bool,
-    palette: u8,
-    bank: usize,
-    color_palette: u8,
-}
-
-impl From<u8> for SpriteAttributes {
-    fn from(f: u8) -> SpriteAttributes {
-        SpriteAttributes {
-            priority: f & 0x80 != 0,
-            reverse_y: f & 0x40 != 0,
-            reverse_x: f & 0x20 != 0,
-            palette: (f & 0x10) >> 4,
-            bank: ((f & 0x08) >> 3) as usize,
-            color_palette: f & 0x07,
-        }
-    }
-}
-
-impl SpriteInfo {
-    fn from_memory(lcd: &LCD, id: u8, size: SpriteSize) -> Self {
-        let id = id as u16;
-        Self {
-            y: lcd.handle_read(0xfe00 + id * 4),
-            x: lcd.handle_read(0xfe00 + id * 4 + 1),
-            tile: lcd.handle_read(0xfe00 + id * 4 + 2)
-                & match size {
-                    SpriteSize::Large => 0xfe,
-                    SpriteSize::Small => 0xff,
-                },
-            flags: lcd.handle_read(0xfe00 + id * 4 + 3).into(),
-        }
-    }
-}
-
 impl LCD {
     pub fn new(cgb: bool) -> Self {
         Self {
@@ -553,18 +508,21 @@ impl LCD {
             }
         }
 
-        // Sprites
+        self.draw_sprites(ly, &bgcolors, &priority);
+    }
+
+    fn draw_sprites(&mut self, ly: u8, bgcolors: &[u8], priority: &[u8]) {
         let sprites = self.get_sprites(ly, self.regs.lcdc.obj_size);
         let size = match self.regs.lcdc.obj_size {
             SpriteSize::Large => 16,
             SpriteSize::Small => 8,
         };
         for info in sprites.iter().rev() {
-            let (sprite_x, sprite_y) = (info.x as u16 - 8, info.y as u16 - 16);
+            let (sprite_x, sprite_y) = (info.x as u16 as i16 - 8, info.y as u16 as i16 - 16);
             let tile_y = if info.flags.reverse_y {
-                (size - 1 - (ly as u16 - sprite_y)) as u16
+                (size - 1 - (ly as i16 - sprite_y)) as u16
             } else {
-                (ly as u16 - sprite_y) as u16
+                (ly as i16 - sprite_y) as u16
             } as u8;
             let address = ((info.tile as u16) * 16
                 + tile_y.wrapping_mul(2) as u16
@@ -574,7 +532,10 @@ impl LCD {
                     0
                 }) as usize;
             let (bottom, top) = (self.video[address], self.video[address + 1]);
-            for x in (0..8).filter(|&x| sprite_x.wrapping_add(x) < SCREEN_SIZE.0 as u16) {
+            for x in (0..8).filter(|&x| {
+                sprite_x.wrapping_add(x) < SCREEN_SIZE.0 as u16 as i16
+                    && sprite_x.wrapping_add(x) >= 0
+            }) {
                 let pixel_x = if info.flags.reverse_x { x } else { 8 - x - 1 };
                 let color = LCD::color_number(pixel_x as u8, top, bottom);
                 let screen_x = sprite_x.wrapping_add(x) as usize;
@@ -617,9 +578,9 @@ impl LCD {
         let mut sprites: Vec<SpriteInfo> = (0..40)
             .map(|i| SpriteInfo::from_memory(self, i, size))
             .filter(|info| {
-                !(info.x.wrapping_sub(8) >= 160
-                    || ly < info.y.wrapping_sub(16)
-                    || ly >= info.y.wrapping_sub(16).wrapping_add(sprite_size))
+                ((info.x as i16).wrapping_sub(8) >= -8 && (info.x as i16).wrapping_sub(8) < 160)
+                    && ly >= info.y.wrapping_sub(16)
+                    && ly < info.y.wrapping_sub(16).wrapping_add(sprite_size)
             })
             .collect();
         sprites.sort_by(|left, right| left.x.partial_cmp(&right.x).unwrap());
@@ -802,6 +763,51 @@ impl ColorPalette {
     fn from_u16(color0: u16, color1: u16, color2: u16, color3: u16) -> Self {
         Self {
             color: [color0.into(), color1.into(), color2.into(), color3.into()],
+        }
+    }
+}
+
+struct SpriteInfo {
+    x: u8,
+    y: u8,
+    tile: u8,
+    flags: SpriteAttributes,
+}
+
+struct SpriteAttributes {
+    priority: bool,
+    reverse_y: bool,
+    reverse_x: bool,
+    palette: u8,
+    bank: usize,
+    color_palette: u8,
+}
+
+impl From<u8> for SpriteAttributes {
+    fn from(f: u8) -> SpriteAttributes {
+        SpriteAttributes {
+            priority: f & 0x80 != 0,
+            reverse_y: f & 0x40 != 0,
+            reverse_x: f & 0x20 != 0,
+            palette: (f & 0x10) >> 4,
+            bank: ((f & 0x08) >> 3) as usize,
+            color_palette: f & 0x07,
+        }
+    }
+}
+
+impl SpriteInfo {
+    fn from_memory(lcd: &LCD, id: u8, size: SpriteSize) -> Self {
+        let id = id as u16;
+        Self {
+            y: lcd.handle_read(0xfe00 + id * 4),
+            x: lcd.handle_read(0xfe00 + id * 4 + 1),
+            tile: lcd.handle_read(0xfe00 + id * 4 + 2)
+                & match size {
+                    SpriteSize::Large => 0xfe,
+                    SpriteSize::Small => 0xff,
+                },
+            flags: lcd.handle_read(0xfe00 + id * 4 + 3).into(),
         }
     }
 }
