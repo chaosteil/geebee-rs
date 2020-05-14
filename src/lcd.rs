@@ -137,12 +137,16 @@ impl From<u8> for SpriteAttributes {
 }
 
 impl SpriteInfo {
-    fn from_memory(lcd: &LCD, id: u8) -> Self {
+    fn from_memory(lcd: &LCD, id: u8, size: SpriteSize) -> Self {
         let id = id as u16;
         Self {
             y: lcd.handle_read(0xfe00 + id * 4),
             x: lcd.handle_read(0xfe00 + id * 4 + 1),
-            tile: lcd.handle_read(0xfe00 + id * 4 + 2),
+            tile: lcd.handle_read(0xfe00 + id * 4 + 2)
+                & match size {
+                    SpriteSize::Large => 0xfe,
+                    SpriteSize::Small => 0xff,
+                },
             flags: lcd.handle_read(0xfe00 + id * 4 + 3).into(),
         }
     }
@@ -551,68 +555,46 @@ impl LCD {
 
         // Sprites
         let sprites = self.get_sprites(ly, self.regs.lcdc.obj_size);
-        let count = match self.regs.lcdc.obj_size {
-            SpriteSize::Large => 2,
-            SpriteSize::Small => 1,
+        let size = match self.regs.lcdc.obj_size {
+            SpriteSize::Large => 16,
+            SpriteSize::Small => 8,
         };
         for info in sprites.iter().rev() {
-            let mut pixel_y = ly.wrapping_sub(info.y).wrapping_add(16);
-            for i in 0..count {
-                let mut sprite_tile = info.tile;
-                if self.regs.lcdc.obj_size == SpriteSize::Large {
-                    if i == 0 {
-                        sprite_tile = info.tile & 0xfe;
-                    } else {
-                        sprite_tile = info.tile | 0x01;
-                        pixel_y = pixel_y.wrapping_sub(8);
-                    }
-                }
-
-                if info.flags.reverse_y {
-                    pixel_y = 8u8.wrapping_sub(pixel_y).wrapping_sub(1);
-                    if self.regs.lcdc.obj_size == SpriteSize::Large {
-                        pixel_y = if i == 1 {
-                            pixel_y.wrapping_sub(8)
-                        } else {
-                            pixel_y.wrapping_add(8)
-                        };
-                    }
-                }
-
-                let mut address =
-                    (((sprite_tile as u16).wrapping_mul(16) as u16) + pixel_y as u16 * 2) as usize;
-                if self.cgb {
-                    address += 0x2000 * info.flags.bank;
-                }
-                let (bottom, top) = (self.video[address], self.video[address + 1]);
-                for x in (0..8).filter(|&x| info.x.wrapping_add(x).wrapping_sub(8) < SCREEN_SIZE.0)
+            let (sprite_x, sprite_y) = (info.x as u16 - 8, info.y as u16 - 16);
+            let tile_y = if info.flags.reverse_y {
+                (size - 1 - (ly as u16 - sprite_y)) as u16
+            } else {
+                (ly as u16 - sprite_y) as u16
+            } as u8;
+            let address = ((info.tile as u16) * 16
+                + tile_y.wrapping_mul(2) as u16
+                + if self.cgb {
+                    0x2000 * (info.flags.bank as u16)
+                } else {
+                    0
+                }) as usize;
+            let (bottom, top) = (self.video[address], self.video[address + 1]);
+            for x in (0..8).filter(|&x| sprite_x.wrapping_add(x) < SCREEN_SIZE.0 as u16) {
+                let pixel_x = if info.flags.reverse_x { x } else { 8 - x - 1 };
+                let color = LCD::color_number(pixel_x as u8, top, bottom);
+                let screen_x = sprite_x.wrapping_add(x) as usize;
+                if color == 0x00
+                    || (info.flags.priority && (bgcolors[screen_x] > 0 || priority[screen_x] > 0))
                 {
-                    let mut pixel_x = 8u8.wrapping_sub(x % 8).wrapping_sub(1);
-                    if info.flags.reverse_x {
-                        pixel_x = 8u8.wrapping_sub(pixel_x).wrapping_sub(1);
-                    }
-                    let screen_x = info.x.wrapping_add(x).wrapping_sub(8) as usize;
-                    let color = LCD::color_number(pixel_x as u8, top, bottom);
-                    if color != 0x00
-                        && !(info.flags.priority
-                            && bgcolors[screen_x] > 0
-                            && priority[screen_x] > 0)
-                    {
-                        let pixel = if self.cgb {
-                            let palette =
-                                self.read_palette(&self.regs.obpd, info.flags.color_palette);
-                            palette.color(color)
-                        } else {
-                            let obp = if info.flags.palette == 1 {
-                                self.regs.obp1
-                            } else {
-                                self.regs.obp0
-                            };
-                            obp.color(color)
-                        };
-                        self.set_pixel(screen_x as u8, ly, pixel);
-                    }
+                    continue;
                 }
+                let pixel = if self.cgb {
+                    let palette = self.read_palette(&self.regs.obpd, info.flags.color_palette);
+                    palette.color(color)
+                } else {
+                    let obp = if info.flags.palette == 1 {
+                        self.regs.obp1
+                    } else {
+                        self.regs.obp0
+                    };
+                    obp.color(color)
+                };
+                self.set_pixel(screen_x as u8, ly, pixel);
             }
         }
     }
@@ -631,14 +613,13 @@ impl LCD {
     }
 
     fn get_sprites(&mut self, ly: u8, size: SpriteSize) -> Vec<SpriteInfo> {
-        let size = if size == SpriteSize::Large { 0 } else { 8 };
+        let sprite_size = if size == SpriteSize::Large { 16 } else { 8 };
         let mut sprites: Vec<SpriteInfo> = (0..40)
-            .map(|i| SpriteInfo::from_memory(self, i))
+            .map(|i| SpriteInfo::from_memory(self, i, size))
             .filter(|info| {
-                !(info.y == 0
-                    || info.y >= SCREEN_SIZE.0
+                !(info.x.wrapping_sub(8) >= 160
                     || ly < info.y.wrapping_sub(16)
-                    || ly >= info.y.wrapping_sub(size))
+                    || ly >= info.y.wrapping_sub(16).wrapping_add(sprite_size))
             })
             .collect();
         sprites.sort_by(|left, right| left.x.partial_cmp(&right.x).unwrap());
