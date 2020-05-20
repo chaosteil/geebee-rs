@@ -1,25 +1,24 @@
 use crate::cpu::CPU;
 use crate::joypad;
+use crate::lcd;
 
 use ::image as im;
 use piston_window::*;
 
 const SCALE: u32 = 2;
+const SCREEN_WIDTH: u32 = lcd::SCREEN_SIZE.0 as u32;
+const SCREEN_HEIGHT: u32 = lcd::SCREEN_SIZE.1 as u32;
 
 pub fn launch(mut cpu: CPU) -> Result<(), Box<dyn std::error::Error>> {
-    let mut window: PistonWindow = WindowSettings::new("GeeBee", (160 * SCALE, 144 * SCALE))
-        .resizable(false)
-        .build()?;
+    let mut window: PistonWindow =
+        WindowSettings::new("GeeBee", (SCREEN_WIDTH * SCALE, SCREEN_HEIGHT * SCALE))
+            .resizable(false)
+            .build()?;
     window.set_ups(60);
-    let mut texture_context = TextureContext {
-        factory: window.factory.clone(),
-        encoder: window.factory.create_command_buffer().into(),
-    };
-    let mut texture = Texture::from_memory_alpha(
+    let mut texture_context = window.create_texture_context();
+    let mut texture = Texture::from_image(
         &mut texture_context,
-        cpu.lcd().screen(),
-        160,
-        144,
+        &im::RgbaImage::from_vec(SCREEN_WIDTH, SCREEN_HEIGHT, cpu.lcd().screen().to_vec()).unwrap(),
         &TextureSettings::new().filter(texture::Filter::Nearest),
     )
     .unwrap();
@@ -37,16 +36,20 @@ pub fn launch(mut cpu: CPU) -> Result<(), Box<dyn std::error::Error>> {
 
         if e.update_args().is_some() {
             cpu.cycle();
-        }
-        window.draw_2d(&e, |c, g, d| {
-            texture_context.encoder.flush(d);
-            let screen = cpu.lcd().screen();
             texture
                 .update(
                     &mut texture_context,
-                    &im::RgbaImage::from_vec(160, 144, screen.to_vec()).unwrap(),
+                    &im::RgbaImage::from_vec(
+                        SCREEN_WIDTH,
+                        SCREEN_HEIGHT,
+                        cpu.lcd().screen().to_vec(),
+                    )
+                    .unwrap(),
                 )
                 .unwrap();
+        }
+        window.draw_2d(&e, |c, g, d| {
+            texture_context.encoder.flush(d);
             image(&texture, c.transform.zoom(SCALE as f64), g);
         });
     }
