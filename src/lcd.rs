@@ -290,6 +290,10 @@ impl LCD {
         self.oam_access = true;
         self.vram_access = true;
 
+        if let HDMA::GDMA = self.regs.hdma_type {
+            self.hdma_transfer(mem);
+        }
+
         if !self.regs.lcdc.display_enable {
             if self.enabled {
                 self.regs.ly = 0;

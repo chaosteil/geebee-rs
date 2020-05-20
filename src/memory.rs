@@ -81,7 +81,7 @@ impl Memory {
                     0xff
                 }
             }
-            0xff00..=0xff7f => self.io[address as usize - 0xff00],
+            0xff00..=0xff6f | 0xff71..=0xff7f => self.io[address as usize - 0xff00],
             0xff80..=0xfffe => self.high_ram[address as usize - 0xff80],
             _ => panic!("should have been handled earlier {:04x}", address),
         }

@@ -1,4 +1,4 @@
-pub type Timing = u8;
+pub type Timing = u16;
 
 pub struct Timer {
     div: SubTimer,
@@ -84,7 +84,7 @@ impl SubTimer {
     fn set_rate(&mut self, rate: u32) {
         self.rate = rate;
     }
-    fn inc(&mut self, value: u8) -> bool {
+    fn inc(&mut self, value: Timing) -> bool {
         let mut overflow = false;
         self.timer += value as u32;
         while self.timer > self.rate {

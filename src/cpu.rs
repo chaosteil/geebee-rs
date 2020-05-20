@@ -21,7 +21,7 @@ pub struct CPU {
     sb: u8,
     sc: u8,
 
-    speed: u8,
+    speed: timer::Timing,
     prepare_speed: bool,
 }
 
@@ -460,7 +460,7 @@ impl CPU {
     }
 
     fn op_and(&mut self, value: u8) -> timer::Timing {
-        self.regs.a = self.regs.a & value;
+        self.regs.a &= value;
         self.regs.f.zero = self.regs.a == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = true;
@@ -469,7 +469,7 @@ impl CPU {
     }
 
     fn op_xor(&mut self, value: u8) -> timer::Timing {
-        self.regs.a = self.regs.a ^ value;
+        self.regs.a ^= value;
         self.regs.f.zero = self.regs.a == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;
@@ -478,7 +478,7 @@ impl CPU {
     }
 
     fn op_or(&mut self, value: u8) -> timer::Timing {
-        self.regs.a = self.regs.a | value;
+        self.regs.a |= value;
         self.regs.f.zero = self.regs.a == 0;
         self.regs.f.add_sub = false;
         self.regs.f.half_carry = false;

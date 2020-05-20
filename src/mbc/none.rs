@@ -7,7 +7,7 @@ pub struct None {
 
 impl None {
     pub fn new(cart: cart::Cartridge) -> Self {
-        Self { cart: cart }
+        Self { cart }
     }
 }
 
