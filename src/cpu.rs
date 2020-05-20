@@ -160,7 +160,8 @@ impl CPU {
             0xff01 => self.sb = value,
             0xff02 => {
                 self.serial.push(self.sb);
-                self.interrupts.flag |= 0x08;
+                // Don't set serial interrupt, or some games won't boot
+                // self.interrupts.flag |= 0x08;
             }
             0xff04 => self.timer.reset_div(),
             0xff05 => self.timer.set_tima(value),
