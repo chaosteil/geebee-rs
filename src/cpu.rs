@@ -4,6 +4,8 @@ use crate::lcd::LCD;
 use crate::memory::Memory;
 use crate::timer;
 
+use std::io::Write;
+
 pub struct CPU {
     memory: Memory,
     lcd: LCD,
@@ -23,6 +25,8 @@ pub struct CPU {
 
     speed: timer::Timing,
     prepare_speed: bool,
+
+    show_serial_output: bool,
 }
 
 impl CPU {
@@ -43,6 +47,7 @@ impl CPU {
             sc: 0,
             speed: 1,
             prepare_speed: false,
+            show_serial_output: false,
         }
     }
 
@@ -79,6 +84,11 @@ impl CPU {
 
     pub fn joypad(&mut self) -> &mut Joypad {
         &mut self.joypad
+    }
+
+    #[allow(dead_code)]
+    pub fn show_serial_output(&mut self, output: bool) {
+        self.show_serial_output = output;
     }
 
     #[allow(dead_code)]
@@ -160,6 +170,10 @@ impl CPU {
             0xff01 => self.sb = value,
             0xff02 => {
                 self.serial.push(self.sb);
+                if self.show_serial_output {
+                    print!("{}", self.sb as char);
+                    std::io::stdout().flush().unwrap();
+                }
                 // Don't set serial interrupt, or some games won't boot
                 // self.interrupts.flag |= 0x08;
             }
