@@ -398,7 +398,11 @@ impl LCD {
             return;
         }
 
-        // BG
+        let (bgcolors, priority) = self.draw_bg(ly);
+        self.draw_sprites(ly, &bgcolors, &priority);
+    }
+
+    fn draw_bg(&mut self, ly: u8) -> (Vec<u8>, Vec<u8>) {
         let unsigned = self.regs.lcdc.bg_window_tile_data_select;
         let mut bgcolors = vec![0; SCREEN_SIZE.0 as usize];
         let mut priority = vec![0; SCREEN_SIZE.0 as usize];
@@ -474,10 +478,10 @@ impl LCD {
             }
         } else {
             for i in 0..SCREEN_SIZE.0 {
-                self.set_pixel(i, ly, Color::new(0xff, 0x00, 0xff));
+                self.set_pixel(i, ly, Color::new(0xff, 0xff, 0xff));
             }
         }
-        self.draw_sprites(ly, &bgcolors, &priority);
+        (bgcolors, priority)
     }
 
     fn draw_sprites(&mut self, ly: u8, bgcolors: &[u8], priority: &[u8]) {
