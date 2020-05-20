@@ -18,7 +18,7 @@ pub fn launch(mut cpu: CPU) -> Result<(), Box<dyn std::error::Error>> {
     let mut texture_context = window.create_texture_context();
     let mut texture = Texture::from_image(
         &mut texture_context,
-        &im::RgbaImage::from_vec(SCREEN_WIDTH, SCREEN_HEIGHT, cpu.lcd().screen().to_vec()).unwrap(),
+        &image_buffer(&cpu),
         &TextureSettings::new().filter(texture::Filter::Nearest),
     )
     .unwrap();
@@ -37,15 +37,7 @@ pub fn launch(mut cpu: CPU) -> Result<(), Box<dyn std::error::Error>> {
         if e.update_args().is_some() {
             cpu.cycle();
             texture
-                .update(
-                    &mut texture_context,
-                    &im::RgbaImage::from_vec(
-                        SCREEN_WIDTH,
-                        SCREEN_HEIGHT,
-                        cpu.lcd().screen().to_vec(),
-                    )
-                    .unwrap(),
-                )
+                .update(&mut texture_context, &image_buffer(&cpu))
                 .unwrap();
         }
         window.draw_2d(&e, |c, g, d| {
@@ -54,6 +46,10 @@ pub fn launch(mut cpu: CPU) -> Result<(), Box<dyn std::error::Error>> {
         });
     }
     Ok(())
+}
+
+fn image_buffer(cpu: &CPU) -> im::RgbaImage {
+    im::RgbaImage::from_vec(SCREEN_WIDTH, SCREEN_HEIGHT, cpu.lcd().screen().to_vec()).unwrap()
 }
 
 fn map_button(key: keyboard::Key) -> Option<joypad::Button> {

@@ -14,7 +14,7 @@ pub struct LCD {
     mode_timing: u16,
 
     vram_access: bool,
-    video: [u8; 0x4000],
+    video: Vec<u8>,
     video_bank: u8,
 
     oam_access: bool,
@@ -120,7 +120,7 @@ impl LCD {
             enabled: false,
             mode_timing: 0,
             vram_access: true,
-            video: [0; 0x4000],
+            video: vec![0; 0x4000],
             video_bank: 0,
             oam_access: true,
             oam: [0; 0xa0],
@@ -396,52 +396,66 @@ impl LCD {
 
         // BG
         let unsigned = self.regs.lcdc.bg_window_tile_data_select;
-        let bg_tile_data: u16 = if unsigned { 0x0000 } else { 0x1000 };
-        let bg_tile_map = if self.regs.lcdc.bg_tile_map_display_select {
-            0x1c00
-        } else {
-            0x1800
-        };
         let mut bgcolors = vec![0; SCREEN_SIZE.0 as usize];
         let mut priority = vec![0; SCREEN_SIZE.0 as usize];
-        if self.regs.lcdc.bg_display {
-            let y = ly.wrapping_add(self.regs.scy);
+        if self.regs.lcdc.bg_display
+            || (self.regs.lcdc.window_display_enable && self.regs.wx <= 166 && self.regs.wy <= ly)
+        {
             for i in 0..SCREEN_SIZE.0 {
-                let x = i.wrapping_add(self.regs.scx);
+                let show_window = self.regs.lcdc.window_display_enable
+                    && self.regs.wx.wrapping_sub(7) <= i
+                    && self.regs.wy <= ly;
+                let (x, y, select_tile_map) = if show_window {
+                    (
+                        i.wrapping_sub(self.regs.wx).wrapping_add(7),
+                        ly.wrapping_sub(self.regs.wy),
+                        self.regs.lcdc.window_tile_map_display_select,
+                    )
+                } else {
+                    (
+                        i.wrapping_add(self.regs.scx),
+                        ly.wrapping_add(self.regs.scy),
+                        self.regs.lcdc.bg_tile_map_display_select,
+                    )
+                };
+                let tile_map = if select_tile_map { 0x1c00 } else { 0x1800 };
+                let tile_data: u16 = if unsigned { 0x0000 } else { 0x1000 };
                 let (tile_x, tile_y) = (x / 8, y / 8);
-                let (pixel_x, mut pixel_y) = (8 - (x % 8) - 1, y % 8);
-
-                let tile_address = (bg_tile_map + (tile_y as u16 * 32) + tile_x as u16) as usize;
+                let tile_address = (tile_map + (tile_y as u16 * 32) + tile_x as u16) as usize;
                 let tile = self.video[tile_address];
-                if self.cgb {
-                    let tileinfo: BGMapAttributes = self.video[tile_address + 0x2000].into();
-                    if tileinfo.reverse_y {
-                        pixel_y = 8u8.wrapping_sub(pixel_y).wrapping_sub(1);
-                    }
-                }
-
+                let tile_info = if self.cgb {
+                    self.video[tile_address + 0x2000].into()
+                } else {
+                    BGMapAttributes::default()
+                };
+                let (pixel_x, pixel_y) = (
+                    if !tile_info.reverse_x {
+                        7 - (x % 8)
+                    } else {
+                        x % 8
+                    },
+                    if !tile_info.reverse_y {
+                        y % 8
+                    } else {
+                        7 - (y % 8)
+                    },
+                );
                 let address = if !unsigned {
-                    (bg_tile_data as i16)
+                    (tile_data as i16)
                         .wrapping_add(tile as i8 as i16 * 16)
                         .wrapping_add(pixel_y as i8 as i16 * 2) as u16 as usize
                 } else {
-                    bg_tile_data
+                    tile_data
                         .wrapping_add(tile as u16 * 16)
                         .wrapping_add(pixel_y as u16 * 2) as usize
                 };
+                let (bottom, top) = (
+                    self.video[address + (0x2000 * tile_info.bank)],
+                    self.video[address + 1 + (0x2000 * tile_info.bank)],
+                );
                 let (pixel, color) = if self.cgb {
-                    let tileinfo: BGMapAttributes = self.video[tile_address + 0x2000].into();
-                    priority[i as usize] = if tileinfo.priority { 0x01 } else { 0x00 };
-                    let (bottom, top) = (
-                        self.video[address + (0x2000 * tileinfo.bank)],
-                        self.video[address + 1 + (0x2000 * tileinfo.bank)],
-                    );
-                    let pixel_x = if tileinfo.reverse_x {
-                        8u8.wrapping_sub(pixel_x).wrapping_sub(1)
-                    } else {
-                        pixel_x
-                    };
-                    let palette = self.read_palette(&self.regs.bgpd, tileinfo.palette);
+                    priority[i as usize] = if tile_info.priority { 0x01 } else { 0x00 };
+                    let palette = self.read_palette(&self.regs.bgpd, tile_info.palette);
                     let color = LCD::color_number(pixel_x as u8, top, bottom);
                     (palette.color(color), color)
                 } else {
@@ -449,65 +463,16 @@ impl LCD {
                     let color = LCD::color_number(pixel_x as u8, top, bottom);
                     (self.regs.bgp.color(color), color)
                 };
-                bgcolors[i as usize] = color;
+                if !show_window {
+                    bgcolors[i as usize] = color;
+                }
                 self.set_pixel(i, ly, pixel);
             }
         } else {
             for i in 0..SCREEN_SIZE.0 {
-                self.set_pixel(i, ly as u8, Color(0xff, 0xff, 0xff));
+                self.set_pixel(i, ly, Color::new(0xff, 0x00, 0xff));
             }
         }
-
-        // Window
-        let win_tile_map = if self.regs.lcdc.window_tile_map_display_select {
-            0x1c00
-        } else {
-            0x1800
-        };
-        if self.regs.lcdc.window_display_enable && self.regs.wx <= 166 && self.regs.wy <= ly {
-            let y = ly.wrapping_sub(self.regs.wy);
-            for i in self.regs.wx.wrapping_sub(7)..SCREEN_SIZE.0 {
-                let x = i.wrapping_sub(self.regs.wx).wrapping_add(7);
-                let (tile_x, tile_y) = (x / 8, y / 8);
-                let (pixel_x, mut pixel_y) = (8 - (x % 8) - 1, y % 8);
-                let tile_address = (win_tile_map + (tile_y as u16 * 32) + tile_x as u16) as usize;
-                if self.cgb {
-                    let tileinfo: BGMapAttributes = self.video[tile_address + 0x2000].into();
-                    if tileinfo.reverse_y {
-                        pixel_y = 8u8.wrapping_sub(pixel_y).wrapping_sub(1);
-                    }
-                }
-
-                let tile = self.video[tile_address];
-                let address = (0x1000u16 as i16)
-                    .wrapping_add(tile as i8 as i16 * 16)
-                    .wrapping_add(pixel_y as i8 as i16 * 2) as u16
-                    as usize;
-                let (pixel, color) = if self.cgb {
-                    let tileinfo: BGMapAttributes = self.video[tile_address + 0x2000].into();
-                    priority[i as usize] = if tileinfo.priority { 0x01 } else { 0x00 };
-                    let (bottom, top) = (
-                        self.video[address + (0x2000 * tileinfo.bank)],
-                        self.video[address + 1 + (0x2000 * tileinfo.bank)],
-                    );
-                    let pixel_x = if tileinfo.reverse_x {
-                        8u8.wrapping_sub(pixel_x).wrapping_sub(1)
-                    } else {
-                        pixel_x
-                    };
-                    let palette = self.read_palette(&self.regs.bgpd, tileinfo.palette);
-                    let color = LCD::color_number(pixel_x as u8, top, bottom);
-                    (palette.color(color), color)
-                } else {
-                    let (bottom, top) = (self.video[address], self.video[address + 1]);
-                    let color = LCD::color_number(pixel_x as u8, top, bottom);
-                    (self.regs.bgp.color(color), color)
-                };
-                bgcolors[i as usize] = color;
-                self.set_pixel(i, ly, pixel);
-            }
-        }
-
         self.draw_sprites(ly, &bgcolors, &priority);
     }
 
@@ -560,16 +525,12 @@ impl LCD {
         }
     }
 
-    fn set_pixel(&mut self, x: u8, y: u8, rgb: Color) {
+    fn set_pixel(&mut self, x: u8, y: u8, c: Color) {
         let (x, y, width) = (x as usize, y as usize, SCREEN_SIZE.0 as usize);
-        if x < width {
-            self.screen[(y * width * 4) + (x * 4)] = rgb.0;
-        }
-        if x + 1 < width {
-            self.screen[(y * width * 4) + (x * 4) + 1] = rgb.1;
-        }
-        if x + 2 < width {
-            self.screen[(y * width * 4) + (x * 4) + 2] = rgb.2;
+        for i in 0..3 {
+            if x + i < width {
+                self.screen[(y * width * 4) + (x * 4) + i] = c.rgb[i];
+            }
         }
     }
 
@@ -705,10 +666,10 @@ impl Palette for MonoPalette {
     fn color(&self, color: u8) -> Color {
         let color = ToPrimitive::to_u8(&self.color[(color & 0x03) as usize]).unwrap();
         match color & 0x03 {
-            0x00 => Color(255, 255, 255),
-            0x01 => Color(170, 170, 170),
-            0x02 => Color(85, 85, 85),
-            0x03 => Color(0, 0, 0),
+            0x00 => Color::new(255, 255, 255),
+            0x01 => Color::new(170, 170, 170),
+            0x02 => Color::new(85, 85, 85),
+            0x03 => Color::new(0, 0, 0),
             _ => unreachable!(),
         }
     }
@@ -737,11 +698,19 @@ impl From<MonoPalette> for u8 {
 }
 
 #[derive(Copy, Clone)]
-struct Color(u8, u8, u8);
+struct Color {
+    rgb: [u8; 3],
+}
+
+impl Color {
+    fn new(r: u8, g: u8, b: u8) -> Color {
+        Color { rgb: [r, g, b] }
+    }
+}
 
 impl From<u16> for Color {
     fn from(color: u16) -> Color {
-        Color(
+        Color::new(
             ((color & 0x001f) * 8) as u8,
             (((color & 0x03e0) >> 5) * 8) as u8,
             (((color & 0x7c00) >> 10) * 8) as u8,
@@ -812,6 +781,7 @@ impl SpriteInfo {
     }
 }
 
+#[derive(Default)]
 struct BGMapAttributes {
     palette: u8,
     bank: usize,
