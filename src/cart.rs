@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::string;
 use std::{io, io::Read};
 use thiserror::Error;
@@ -11,6 +11,7 @@ pub struct Cartridge {
     cgb: bool,
     sgb: bool,
     data: Vec<u8>,
+    path: Option<PathBuf>,
 }
 
 impl Cartridge {
@@ -22,13 +23,16 @@ impl Cartridge {
             cgb: false,
             sgb: false,
             data: vec![],
+            path: None,
         }
     }
 
-    pub fn with_path(self, cart: &Path) -> Result<Self, Error> {
+    pub fn with_path(mut self, cart: &Path) -> Result<Self, Error> {
         let mut data = Vec::<u8>::new();
         let mut file = File::open(cart)?;
         file.read_to_end(&mut data)?;
+
+        self.path = Some(PathBuf::from(cart));
         self.with_data(&data)
     }
 
@@ -59,6 +63,13 @@ impl Cartridge {
 
     pub fn title(&self) -> &String {
         &self.title
+    }
+
+    pub fn path(&self) -> Option<&Path> {
+        match &self.path {
+            Some(p) => Some(&p),
+            None => None,
+        }
     }
 
     pub fn cart_type(&self) -> CartType {

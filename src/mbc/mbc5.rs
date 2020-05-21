@@ -1,5 +1,5 @@
 use crate::cart;
-use crate::mbc::MBC;
+use crate::mbc::{handle_save, prepare_save, MBC};
 
 pub struct MBC5 {
     cart: cart::Cartridge,
@@ -16,13 +16,14 @@ impl MBC5 {
             0 => 0,
             s => 0x2000 << s,
         };
+        let ram = prepare_save(&cart, ram_size).unwrap();
         Self {
             cart,
             rom_bank: 1,
 
             ram_enabled: false,
             ram_bank: 0,
-            ram: vec![0; ram_size],
+            ram,
         }
     }
 }
@@ -49,7 +50,12 @@ impl MBC for MBC5 {
 
     fn write(&mut self, address: u16, value: u8) {
         match address {
-            0x0000..=0x1fff => self.ram_enabled = (value & 0x0f) == 0x0a,
+            0x0000..=0x1fff => {
+                self.ram_enabled = (value & 0x0f) == 0x0a;
+                if !self.ram_enabled {
+                    handle_save(&self.cart, &self.ram).unwrap();
+                }
+            }
             0x2000..=0x2fff => self.rom_bank = (self.rom_bank & 0xff00) | value as usize,
             0x3000..=0x3fff => {
                 self.rom_bank =
