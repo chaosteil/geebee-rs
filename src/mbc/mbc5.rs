@@ -14,7 +14,7 @@ impl MBC5 {
     pub fn new(cart: cart::Cartridge) -> Self {
         let ram_size = match cart.ram_size() {
             0 => 0,
-            s => 0x1000 << s,
+            s => 0x2000 << s,
         };
         Self {
             cart,
@@ -37,7 +37,7 @@ impl MBC for MBC5 {
             }
             0xa000..=0xbfff => {
                 if self.ram_enabled {
-                    let address = (0x1000 * self.ram_bank as u16) + (address - 0xa000);
+                    let address = (0x2000 * self.ram_bank as u16) + (address - 0xa000);
                     self.ram[address as usize]
                 } else {
                     0
@@ -59,7 +59,7 @@ impl MBC for MBC5 {
             0x6000..=0x7fff => {}
             0xa000..=0xbfff => {
                 if self.ram_enabled {
-                    let address = (0x1000 * self.ram_bank) + ((address as usize) - 0xa000);
+                    let address = (0x2000 * self.ram_bank) + ((address as usize) - 0xa000);
                     self.ram[address] = value;
                 }
             }
