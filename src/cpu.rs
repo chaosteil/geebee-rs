@@ -1,4 +1,5 @@
 use crate::bytes;
+use crate::cart::GBType;
 use crate::joypad::Joypad;
 use crate::lcd::LCD;
 use crate::memory::Memory;
@@ -23,6 +24,7 @@ pub struct CPU {
     sb: u8,
     sc: u8,
 
+    gb: GBType,
     speed: timer::Timing,
     prepare_speed: bool,
 
@@ -32,7 +34,8 @@ pub struct CPU {
 impl CPU {
     pub fn new(memory: Memory, lcd: LCD) -> Self {
         let has_bootrom = memory.has_bootrom();
-        Self {
+        let gb = memory.gb();
+        let mut cpu = Self {
             memory,
             lcd,
             joypad: Joypad::new(),
@@ -45,10 +48,61 @@ impl CPU {
             pc: if has_bootrom { 0 } else { 0x0100 },
             sb: 0,
             sc: 0,
+            gb,
             speed: 1,
             prepare_speed: false,
             show_serial_output: false,
+        };
+        if !has_bootrom {
+            cpu.reset();
         }
+        cpu
+    }
+
+    pub fn reset(&mut self) {
+        // Taken from Gameboy Pan Docs
+        self.regs.set_af(0x01b0);
+        if let GBType::CGB(_) = self.gb {
+            self.regs.a = 0x11;
+        }
+        self.regs.set_bc(0x0013);
+        self.regs.set_de(0x00d8);
+        self.regs.set_hl(0x014d);
+        self.sp = 0xfffe;
+        self.pc = 0x0100;
+
+        self.write(0xff05, 0x00);
+        self.write(0xff06, 0x00);
+        self.write(0xff07, 0x00);
+        self.write(0xff10, 0x80);
+        self.write(0xff11, 0xbf);
+        self.write(0xff12, 0xf3);
+        self.write(0xff14, 0xbf);
+        self.write(0xff16, 0xf3);
+        self.write(0xff17, 0x00);
+        self.write(0xff19, 0xbf);
+        self.write(0xff1a, 0x7f);
+        self.write(0xff1b, 0xff);
+        self.write(0xff1c, 0x9f);
+        self.write(0xff1e, 0xbf);
+        self.write(0xff20, 0xff);
+        self.write(0xff21, 0x00);
+        self.write(0xff22, 0x00);
+        self.write(0xff23, 0xbf);
+        self.write(0xff24, 0x77);
+        self.write(0xff25, 0xf3);
+        self.write(0xff26, 0xf1);
+        self.write(0xff40, 0x91);
+        self.write(0xff42, 0x00);
+        self.write(0xff43, 0x00);
+        self.write(0xff45, 0x00);
+        self.write(0xff47, 0xfc);
+        self.write(0xff48, 0xff);
+        self.write(0xff49, 0xff);
+        self.write(0xff4a, 0x00);
+        self.write(0xff4b, 0x00);
+        self.write(0xffff, 0x00);
+        self.write(0xff50, 0x01);
     }
 
     pub fn cycle(&mut self) {
@@ -188,7 +242,11 @@ impl CPU {
             | 0xff4f
             | 0xff51..=0xff55
             | 0xff68..=0xff6b => self.lcd.handle_write(&mut self.memory, address, value),
-            0xff4d => self.prepare_speed = value == 0x01,
+            0xff4d => {
+                if let GBType::CGB(_) = self.gb {
+                    self.prepare_speed = value == 0x01
+                }
+            }
             0xff50 => {
                 if value != 0 {
                     self.memory.disable_booting()

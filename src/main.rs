@@ -30,6 +30,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .takes_value(true)
                 .help("path to the bootrom"),
         )
+        .arg(
+            Arg::with_name("serial-stdout")
+                .short("s")
+                .long("serial-stdout")
+                .takes_value(false)
+                .help("print out anything on the serial device into stdout"),
+        )
         .get_matches();
 
     let cart = cart::Cartridge::new().with_path(Path::new(matches.value_of("rom").unwrap()))?;
@@ -39,8 +46,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         memory = memory.with_bootrom_path(Path::new(bootrom))?;
     }
 
-    let lcd = lcd::LCD::new(memory.cgb_mode());
-    let cpu = cpu::CPU::new(memory, lcd);
+    let lcd = lcd::LCD::new(memory.gb());
+    let mut cpu = cpu::CPU::new(memory, lcd);
+
+    if matches.is_present("serial-stdout") {
+        cpu.show_serial_output(true);
+    }
 
     ui::launch(cpu)?;
 

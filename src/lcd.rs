@@ -1,4 +1,5 @@
 use crate::bytes;
+use crate::cart::GBType;
 use crate::{cpu::Interrupts, memory::Memory, timer::Timing};
 use num_derive::{FromPrimitive, ToPrimitive};
 use num_traits::{FromPrimitive, ToPrimitive};
@@ -8,7 +9,7 @@ pub const SCREEN_SIZE: (u8, u8) = (160, 144);
 pub struct LCD {
     regs: Registers,
     done_frame: bool,
-    cgb: bool,
+    gb: GBType,
 
     enabled: bool,
     mode_timing: u16,
@@ -108,19 +109,19 @@ struct STAT {
 }
 
 impl LCD {
-    pub fn new(cgb: bool) -> Self {
+    pub fn new(gb: GBType) -> Self {
         Self {
             regs: Registers {
                 bgpd: vec![0xff; 0x40],
                 obpd: vec![0xff; 0x40],
                 ..Default::default()
             },
-            done_frame: true,
-            cgb,
+            done_frame: false,
+            gb,
             enabled: false,
             mode_timing: 0,
             vram_access: true,
-            video: vec![0; 0x4000],
+            video: vec![0x00; 0x4000],
             video_bank: 0,
             oam_access: true,
             oam: [0; 0xa0],
@@ -431,7 +432,7 @@ impl LCD {
                 let (tile_x, tile_y) = (x / 8, y / 8);
                 let tile_address = (tile_map + (tile_y as u16 * 32) + tile_x as u16) as usize;
                 let tile = self.video[tile_address];
-                let tile_info = if self.cgb {
+                let tile_info = if let GBType::CGB(_) = self.gb {
                     self.video[tile_address + 0x2000].into()
                 } else {
                     BGMapAttributes::default()
@@ -461,7 +462,7 @@ impl LCD {
                     self.video[address + (0x2000 * tile_info.bank)],
                     self.video[address + 1 + (0x2000 * tile_info.bank)],
                 );
-                let (pixel, color) = if self.cgb {
+                let (pixel, color) = if let GBType::CGB(_) = self.gb {
                     priority[i as usize] = if tile_info.priority { 0x01 } else { 0x00 };
                     let palette = self.read_palette(&self.regs.bgpd, tile_info.palette);
                     let color = LCD::color_number(pixel_x as u8, top, bottom);
@@ -499,7 +500,7 @@ impl LCD {
             } as u8;
             let address = ((info.tile as u16) * 16
                 + tile_y.wrapping_mul(2) as u16
-                + if self.cgb {
+                + if let GBType::CGB(_) = self.gb {
                     0x2000 * (info.flags.bank as u16)
                 } else {
                     0
@@ -517,7 +518,7 @@ impl LCD {
                 {
                     continue;
                 }
-                let pixel = if self.cgb {
+                let pixel = if let GBType::CGB(_) = self.gb {
                     let palette = self.read_palette(&self.regs.obpd, info.flags.color_palette);
                     palette.color(color)
                 } else {

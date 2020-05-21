@@ -1,4 +1,4 @@
-use crate::cart::{Cartridge, Controller};
+use crate::cart::{CGBType, Cartridge, Controller, GBType};
 use crate::mbc;
 use crate::mbc::MBC;
 use std::{fs::File, io::Read, path::Path};
@@ -11,7 +11,7 @@ pub struct Memory {
 
     work_ram_bank: usize,
 
-    cgb_mode: bool,
+    gb: GBType,
 }
 
 impl Memory {
@@ -24,14 +24,14 @@ impl Memory {
             work_ram_bank: 1,
             work_ram: vec![0; 0x2000],
 
-            cgb_mode: false,
+            gb: GBType::CGB(CGBType::SupportCGB),
         }
     }
 
     pub fn with_cartridge(cart: Cartridge) -> Self {
         let mut mem = Self::new();
-        mem.cgb_mode = cart.cgb();
-        if mem.cgb_mode {
+        mem.gb = cart.gb();
+        if let GBType::CGB(_) = mem.gb {
             mem.work_ram = vec![0; 0x8000];
         }
         mem.state = State::MBC(match cart.cart_type().controller {
@@ -61,8 +61,8 @@ impl Memory {
         Ok(self.with_bootrom(&data))
     }
 
-    pub fn cgb_mode(&self) -> bool {
-        self.cgb_mode
+    pub fn gb(&self) -> GBType {
+        self.gb
     }
 
     pub fn read(&self, address: u16) -> u8 {
@@ -75,7 +75,7 @@ impl Memory {
             0xe000..=0xfdff => self.read(address - 0x2000),
             0xfea0..=0xfeff => 0xff,
             0xff70 => {
-                if self.cgb_mode {
+                if let GBType::CGB(_) = self.gb {
                     self.work_ram_bank as u8
                 } else {
                     0xff
@@ -97,7 +97,7 @@ impl Memory {
             0xe000..=0xfdff => self.write(address - 0x2000, value),
             0xfea0..=0xfeff => {}
             0xff70 => {
-                if self.cgb_mode {
+                if let GBType::CGB(_) = self.gb {
                     self.work_ram_bank = match value & 0x07 {
                         0 => 1,
                         n => n as usize,

@@ -8,7 +8,7 @@ pub struct Cartridge {
     title: String,
     cart_type: CartType,
     ram_size: u8,
-    cgb: bool,
+    gb: GBType,
     sgb: bool,
     data: Vec<u8>,
     path: Option<PathBuf>,
@@ -20,7 +20,7 @@ impl Cartridge {
             title: "EMPTY".to_string(),
             cart_type: CartType::default(),
             ram_size: 9,
-            cgb: false,
+            gb: GBType::CGB(CGBType::SupportCGB),
             sgb: false,
             data: vec![],
             path: None,
@@ -46,17 +46,18 @@ impl Cartridge {
             .to_string();
         self.cart_type = CartType::from(data[0x0147]);
         self.ram_size = data[0x149];
-        self.cgb = match data[0x0143] {
-            0x80 | 0xc0 => true,
-            _ => false,
+        self.gb = match data[0x0143] {
+            0x80 => GBType::CGB(CGBType::SupportCGB),
+            0xc0 => GBType::CGB(CGBType::OnlyCGB),
+            _ => GBType::NonCGB,
         };
         self.sgb = data[0x0146] == 0x03;
         self.data = data.to_vec();
         println!(
-            "Cart Data: {}, {:?} CGB: {}",
+            "Cart Data: {}, {:?} GB: {:?}",
             self.title(),
             self.cart_type(),
-            self.cgb
+            self.gb
         );
         Ok(self)
     }
@@ -80,8 +81,8 @@ impl Cartridge {
         &self.data
     }
 
-    pub fn cgb(&self) -> bool {
-        self.cgb
+    pub fn gb(&self) -> GBType {
+        self.gb
     }
 
     pub fn ram_size(&self) -> u8 {
@@ -99,6 +100,18 @@ impl Cartridge {
             Ok(())
         }
     }
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum GBType {
+    NonCGB,
+    CGB(CGBType),
+}
+
+#[derive(Debug, Copy, Clone)]
+pub enum CGBType {
+    SupportCGB,
+    OnlyCGB,
 }
 
 #[derive(Default, Debug, Clone)]
