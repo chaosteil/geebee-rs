@@ -61,7 +61,7 @@ struct Registers {
     hdma_transfer: u8,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 enum HDMA {
     None,
     GDMA,
@@ -131,6 +131,33 @@ impl LCD {
 
     pub fn screen(&self) -> &[u8] {
         &self.screen
+    }
+
+    // Prints out a 32*32 map of tiles in VRAM using the regular background palette.
+    #[allow(dead_code)]
+    pub fn tiles(&self) -> Vec<u8> {
+        let (width, height) = (32, 32);
+        let mut data = vec![0xff; width * height * 8 * 8 * 4];
+        for tile_y in 0..height {
+            for tile_x in 0..width {
+                for pixel_y in 0..8 {
+                    let address = ((tile_y * width + tile_x) as u16 * 16)
+                        .wrapping_add(pixel_y as u16 * 2)
+                        as usize;
+                    for pixel_x in 0..8 {
+                        let (bottom, top) = (self.video[address], self.video[address + 1]);
+                        let color = LCD::color_number(pixel_x as u8, top, bottom);
+                        let pixel = self.regs.bgp.color(color);
+                        for i in 0..3 {
+                            data[(tile_y * 8 + pixel_y) * width * 8 * 4
+                                + (tile_x * 8 + 7 - pixel_x) * 4
+                                + i] = pixel.rgb[i];
+                        }
+                    }
+                }
+            }
+        }
+        data
     }
 
     pub fn done_frame(&self) -> bool {
@@ -234,7 +261,7 @@ impl LCD {
         let end = ((value as u16) << 8) | 0x009f;
         for dest in start..=end {
             let v = mem.read(dest);
-            self.handle_write(mem, 0xfe00 | (dest & 0xff) as u16, v);
+            self.handle_write(mem, 0xfe00 | (dest & 0x00ff), v);
         }
     }
 
@@ -463,12 +490,13 @@ impl LCD {
                     self.video[address + 1 + (0x2000 * tile_info.bank)],
                 );
                 let (pixel, color) = if let GBType::CGB(_) = self.gb {
-                    priority[i as usize] = if tile_info.priority { 0x01 } else { 0x00 };
+                    if !show_window {
+                        priority[i as usize] = if tile_info.priority { 0x01 } else { 0x00 };
+                    }
                     let palette = self.read_palette(&self.regs.bgpd, tile_info.palette);
                     let color = LCD::color_number(pixel_x as u8, top, bottom);
                     (palette.color(color), color)
                 } else {
-                    let (bottom, top) = (self.video[address], self.video[address + 1]);
                     let color = LCD::color_number(pixel_x as u8, top, bottom);
                     (self.regs.bgp.color(color), color)
                 };
@@ -510,11 +538,13 @@ impl LCD {
                 sprite_x.wrapping_add(x) < SCREEN_SIZE.0 as u16 as i16
                     && sprite_x.wrapping_add(x) >= 0
             }) {
-                let pixel_x = if info.flags.reverse_x { x } else { 8 - x - 1 };
+                let pixel_x = if info.flags.reverse_x { x } else { 7 - x };
                 let color = LCD::color_number(pixel_x as u8, top, bottom);
                 let screen_x = sprite_x.wrapping_add(x) as usize;
                 if color == 0x00
-                    || (info.flags.priority && (bgcolors[screen_x] > 0 || priority[screen_x] > 0))
+                    || (info.flags.priority
+                        && (bgcolors[screen_x] > 0 || priority[screen_x] > 0)
+                        && !self.regs.lcdc.bg_display)
                 {
                     continue;
                 }
