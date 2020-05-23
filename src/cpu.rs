@@ -26,6 +26,7 @@ pub struct CPU {
 
     gb: GBType,
     speed: timer::Timing,
+    extra_timing: timer::Timing,
     prepare_speed: bool,
 
     show_serial_output: bool,
@@ -50,6 +51,7 @@ impl CPU {
             sc: 0,
             gb,
             speed: 1,
+            extra_timing: 0,
             prepare_speed: false,
             show_serial_output: false,
         };
@@ -125,11 +127,20 @@ impl CPU {
         } else {
             self.handle_instruction()
         };
+        self.advance_timer(timing);
+        self.lcd.advance(
+            &mut self.interrupts,
+            &mut self.memory,
+            self.extra_timing / self.speed,
+        );
+        self.extra_timing = 0;
+    }
+
+    fn advance_timer(&mut self, timing: timer::Timing) {
+        self.extra_timing += timing;
         if self.timer.advance(timing * self.speed) {
             self.interrupts.flag |= 0x04;
         }
-        self.lcd
-            .advance(&mut self.interrupts, &mut self.memory, timing / self.speed);
     }
 
     pub fn lcd(&self) -> &LCD {
@@ -402,16 +413,19 @@ impl CPU {
 
     fn op_write_16_data(&mut self) -> timer::Timing {
         let low = self.read_pc();
+        self.advance_timer(4);
         let high = self.read_pc();
+        self.advance_timer(4);
         self.write(bytes::assemble(high, low), self.regs.a);
-        16
+        8
     }
 
     fn op_load_16_data(&mut self) -> timer::Timing {
         let low = self.read_pc();
         let high = self.read_pc();
+        self.advance_timer(8);
         self.regs.a = self.read(bytes::assemble(high, low));
-        16
+        8
     }
 
     fn op_inc(&mut self, value: u8) -> (u8, timer::Timing) {
@@ -707,9 +721,10 @@ impl CPU {
             0x24 => { let (value, timing) = self.op_inc(self.regs.h); self.regs.h = value; timing }
             0x34 => {
                 let value = self.read(self.regs.hl());
+                self.advance_timer(4);
                 let value = self.op_inc(value).0;
                 self.write(self.regs.hl(), value);
-                12
+                8
             }
 
             0x05 => { let (value, timing) = self.op_dec(self.regs.b); self.regs.b = value; timing }
@@ -717,15 +732,16 @@ impl CPU {
             0x25 => { let (value, timing) = self.op_dec(self.regs.h); self.regs.h = value; timing }
             0x35 => {
                 let value = self.read(self.regs.hl());
+                self.advance_timer(4);
                 let value = self.op_dec(value).0;
                 self.write(self.regs.hl(), value);
-                12
+                8
             }
 
             0x06 => { self.regs.b = self.read_pc(); 8 }
             0x16 => { self.regs.d = self.read_pc(); 8 }
             0x26 => { self.regs.h = self.read_pc(); 8 }
-            0x36 => { let value = self.read_pc(); self.write(self.regs.hl(), value); 12 }
+            0x36 => { self.advance_timer(4); let value = self.read_pc(); self.write(self.regs.hl(), value); 8 }
 
             0x07 => { let (value, _) = self.op_rl(self.regs.a); self.regs.a = value; self.regs.f.zero = false; 4 }
             0x17 => { let (value, _) = self.op_rlc(self.regs.a); self.regs.a = value; self.regs.f.zero = false; 4 }
@@ -931,8 +947,8 @@ impl CPU {
 
             0xc0 => self.op_ret(!self.regs.f.zero),
             0xd0 => self.op_ret(!self.regs.f.carry),
-            0xe0 => { let word = self.read_pc() as u16; self.write(0xff00 + word, self.regs.a); 12 }
-            0xf0 => { let word = self.read_pc() as u16; self.regs.a = self.read(0xff00 + word); 12 }
+            0xe0 => { self.advance_timer(4); let word = self.read_pc() as u16; self.write(0xff00 + word, self.regs.a); 8 }
+            0xf0 => { self.advance_timer(4); let word = self.read_pc() as u16; self.regs.a = self.read(0xff00 + word); 8 }
 
             0xc1 => { let (value, timing) = self.op_pop(); self.regs.set_bc(value); timing }
             0xd1 => { let (value, timing) = self.op_pop(); self.regs.set_de(value); timing }
@@ -1012,10 +1028,12 @@ impl CPU {
             0x04 => { let (value, timing) = self.op_rl(self.regs.h); self.regs.h = value; timing }
             0x05 => { let (value, timing) = self.op_rl(self.regs.l); self.regs.l = value; timing }
             0x06 => {
+                self.advance_timer(4);
                 let value = self.read(self.regs.hl());
+                self.advance_timer(4);
                 let value = self.op_rl(value).0;
                 self.write(self.regs.hl(), value);
-                16
+                8
             }
             0x07 => { let (value, timing) = self.op_rl(self.regs.a); self.regs.a = value; timing }
 
@@ -1026,10 +1044,12 @@ impl CPU {
             0x0c => { let (value, timing) = self.op_rr(self.regs.h); self.regs.h = value; timing }
             0x0d => { let (value, timing) = self.op_rr(self.regs.l); self.regs.l = value; timing }
             0x0e => {
+                self.advance_timer(4);
                 let value = self.read(self.regs.hl());
+                self.advance_timer(4);
                 let value = self.op_rr(value).0;
                 self.write(self.regs.hl(), value);
-                16
+                8
             }
             0x0f => { let (value, timing) = self.op_rr(self.regs.a); self.regs.a = value; timing }
 
@@ -1040,10 +1060,12 @@ impl CPU {
             0x14 => { let (value, timing) = self.op_rlc(self.regs.h); self.regs.h = value; timing }
             0x15 => { let (value, timing) = self.op_rlc(self.regs.l); self.regs.l = value; timing }
             0x16 => {
+                self.advance_timer(4);
                 let value = self.read(self.regs.hl());
+                self.advance_timer(4);
                 let value = self.op_rlc(value).0;
                 self.write(self.regs.hl(), value);
-                16
+                8
             }
             0x17 => { let (value, timing) = self.op_rlc(self.regs.a); self.regs.a = value; timing }
 
@@ -1054,10 +1076,12 @@ impl CPU {
             0x1c => { let (value, timing) = self.op_rrc(self.regs.h); self.regs.h = value; timing }
             0x1d => { let (value, timing) = self.op_rrc(self.regs.l); self.regs.l = value; timing }
             0x1e => {
+                self.advance_timer(4);
                 let value = self.read(self.regs.hl());
+                self.advance_timer(4);
                 let value = self.op_rrc(value).0;
                 self.write(self.regs.hl(), value);
-                16
+                8
             }
             0x1f => { let (value, timing) = self.op_rrc(self.regs.a); self.regs.a = value; timing }
 
@@ -1068,10 +1092,12 @@ impl CPU {
             0x24 => { let (value, timing) = self.op_sll(self.regs.h); self.regs.h = value; timing }
             0x25 => { let (value, timing) = self.op_sll(self.regs.l); self.regs.l = value; timing }
             0x26 => {
+                self.advance_timer(4);
                 let value = self.read(self.regs.hl());
+                self.advance_timer(4);
                 let value = self.op_sll(value).0;
                 self.write(self.regs.hl(), value);
-                16
+                8
             }
             0x27 => { let (value, timing) = self.op_sll(self.regs.a); self.regs.a = value; timing }
 
@@ -1082,10 +1108,12 @@ impl CPU {
             0x2c => { let (value, timing) = self.op_sr(self.regs.h); self.regs.h = value; timing }
             0x2d => { let (value, timing) = self.op_sr(self.regs.l); self.regs.l = value; timing }
             0x2e => {
+                self.advance_timer(4);
                 let value = self.read(self.regs.hl());
+                self.advance_timer(4);
                 let value = self.op_sr(value).0;
                 self.write(self.regs.hl(), value);
-                16
+                8
             }
             0x2f => { let (value, timing) = self.op_sr(self.regs.a); self.regs.a = value; timing }
 
@@ -1096,10 +1124,12 @@ impl CPU {
             0x34 => { let (value, timing) = self.op_swap(self.regs.h); self.regs.h = value; timing }
             0x35 => { let (value, timing) = self.op_swap(self.regs.l); self.regs.l = value; timing }
             0x36 => {
+                self.advance_timer(4);
                 let value = self.read(self.regs.hl());
+                self.advance_timer(4);
                 let value = self.op_swap(value).0;
                 self.write(self.regs.hl(), value);
-                16
+                8
             }
             0x37 => { let (value, timing) = self.op_swap(self.regs.a); self.regs.a = value; timing }
 
@@ -1110,10 +1140,12 @@ impl CPU {
             0x3c => { let (value, timing) = self.op_srl(self.regs.h); self.regs.h = value; timing }
             0x3d => { let (value, timing) = self.op_srl(self.regs.l); self.regs.l = value; timing }
             0x3e => {
+                self.advance_timer(4);
                 let value = self.read(self.regs.hl());
+                self.advance_timer(4);
                 let value = self.op_srl(value).0;
                 self.write(self.regs.hl(), value);
-                16
+                8
             }
             0x3f => { let (value, timing) = self.op_srl(self.regs.a); self.regs.a = value; timing }
             0x40..=0x7f => {
@@ -1126,8 +1158,9 @@ impl CPU {
                     4 => self.op_bit(self.regs.h, bit),
                     5 => self.op_bit(self.regs.l, bit),
                     6 => {
+                self.advance_timer(4);
                         let value = self.read(self.regs.hl());
-                        self.op_bit(value, bit) + 4
+                        self.op_bit(value, bit)
                     }
                     7 => self.op_bit(self.regs.a, bit),
                     _ => unreachable!(),
@@ -1143,10 +1176,12 @@ impl CPU {
                     4 => { let (value, timing) = self.op_res(self.regs.h, bit); self.regs.h = value; timing }
                     5 => { let (value, timing) = self.op_res(self.regs.l, bit); self.regs.l = value; timing }
                     6 => {
+                self.advance_timer(4);
                         let value = self.read(self.regs.hl());
+                self.advance_timer(4);
                         let (value, _) = self.op_res(value, bit);
                         self.write(self.regs.hl(), value);
-                        16
+                        8
                     }
                     7 => { let (value, timing) = self.op_res(self.regs.a, bit); self.regs.a = value; timing }
                     _ => unreachable!(),
@@ -1162,10 +1197,12 @@ impl CPU {
                     4 => { let (value, timing) = self.op_set(self.regs.h, bit); self.regs.h = value; timing }
                     5 => { let (value, timing) = self.op_set(self.regs.l, bit); self.regs.l = value; timing }
                     6 => {
+                self.advance_timer(4);
                         let value = self.read(self.regs.hl());
+                self.advance_timer(4);
                         let (value, _) = self.op_set(value, bit);
                         self.write(self.regs.hl(), value);
-                        16
+                        8
                     }
                     7 => { let (value, timing) = self.op_set(self.regs.a, bit); self.regs.a = value; timing }
                     _ => unreachable!(),
